@@ -7,6 +7,16 @@ export const GET = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
     const companyId = req.nextUrl.searchParams.get("company_id");
 
     if (companyId) {
+      // Verify company belongs to this org before returning reports
+      const admin = (await import("@/lib/supabase/admin")).createAdminClient();
+      const { data: company } = await admin
+        .from("companies")
+        .select("organization_id")
+        .eq("company_id", companyId)
+        .maybeSingle();
+      if (!company || company.organization_id !== ctx.organizationId) {
+        return Response.json({ error: "Company not found" }, { status: 404 });
+      }
       const reports = await getReports(companyId);
       return Response.json({ reports });
     }
