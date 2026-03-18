@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/auth/AuthContext";
+import { RunsProvider } from "@/lib/context/RunsContext";
 
 const NAV_ITEMS = [
   { href: "/companies", label: "Companies", icon: Building2 },
@@ -158,15 +159,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        <header className="flex h-14 items-center gap-2 border-b px-4">
-          <SidebarTrigger className="-ml-1" />
-          <Separator orientation="vertical" className="h-4" />
-        </header>
-        <main className="flex-1 p-4">{children}</main>
-      </SidebarInset>
-    </SidebarProvider>
+    <RunsProvider>
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <header className="flex h-14 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="h-4" />
+          </header>
+          <main className="flex-1 p-4">{children}</main>
+        </SidebarInset>
+      </SidebarProvider>
+    </RunsProvider>
   );
 }
