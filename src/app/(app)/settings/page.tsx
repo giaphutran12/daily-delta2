@@ -13,9 +13,10 @@ import {
   updateSignalDefinition,
   deleteSignalDefinition,
   toggleSignalDefinition,
+  getCompanies,
   type EmailFrequency,
 } from "@/lib/api/client";
-import type { OrganizationMember, SignalDefinition } from "@/lib/types";
+import type { OrganizationMember, SignalDefinition, Company } from "@/lib/types";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -73,6 +74,8 @@ type SignalFormData = {
   signal_type: string;
   target_url: string;
   search_instructions: string;
+  scope: "global" | "company";
+  company_id: string | null;
 };
 
 const EMPTY_SIGNAL_FORM: SignalFormData = {
@@ -81,6 +84,8 @@ const EMPTY_SIGNAL_FORM: SignalFormData = {
   signal_type: "",
   target_url: "",
   search_instructions: "",
+  scope: "global",
+  company_id: null,
 };
 
 const FREQUENCY_OPTIONS: { value: EmailFrequency; label: string; desc: string }[] = [
@@ -125,6 +130,8 @@ export default function SettingsPage() {
 
   const [signalDefs, setSignalDefs] = useState<SignalDefinition[]>([]);
   const [signalDefsLoading, setSignalDefsLoading] = useState(false);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [companiesLoading, setCompaniesLoading] = useState(false);
   const [signalDialogOpen, setSignalDialogOpen] = useState(false);
   const [editingDef, setEditingDef] = useState<SignalDefinition | undefined>();
   const [signalForm, setSignalForm] = useState<SignalFormData>({ ...EMPTY_SIGNAL_FORM });
@@ -158,6 +165,15 @@ export default function SettingsPage() {
       .then((defs) => setSignalDefs(defs.filter((d) => d.scope === "global")))
       .catch(() => setSignalDefs([]))
       .finally(() => setSignalDefsLoading(false));
+  }, [currentOrg]);
+
+  useEffect(() => {
+    if (!currentOrg) return;
+    setCompaniesLoading(true);
+    getCompanies()
+      .then((data) => setCompanies(data.companies))
+      .catch(() => setCompanies([]))
+      .finally(() => setCompaniesLoading(false));
   }, [currentOrg]);
 
   const currentUserRole = members.find((m) => m.user_id === user?.id)?.role;
@@ -250,6 +266,8 @@ export default function SettingsPage() {
       signal_type: def.signal_type,
       target_url: def.target_url,
       search_instructions: def.search_instructions,
+      scope: def.scope ?? "global",
+      company_id: def.company_id ?? null,
     });
     setSignalFormError(null);
     setSignalDialogOpen(true);
@@ -272,10 +290,14 @@ export default function SettingsPage() {
   };
 
   const handleSaveSignal = async () => {
-    const { name, signal_type, display_name, target_url, search_instructions } =
+    const { name, signal_type, display_name, target_url, search_instructions, scope, company_id } =
       signalForm;
     if (!name || !signal_type || !display_name || !target_url || !search_instructions) {
       setSignalFormError("All fields are required.");
+      return;
+    }
+    if (scope === "company" && !company_id) {
+      setSignalFormError("Please select a company for company-scoped signals.");
       return;
     }
     setSignalFormSaving(true);
@@ -284,8 +306,8 @@ export default function SettingsPage() {
       if (editingDef) {
         const updated = await updateSignalDefinition(editingDef.id, {
           ...signalForm,
-          scope: "global",
-          company_id: null,
+          scope,
+          company_id,
         });
         setSignalDefs((prev) =>
           prev.map((d) => (d.id === editingDef.id ? updated : d)),
@@ -293,8 +315,8 @@ export default function SettingsPage() {
       } else {
         const created = await createSignalDefinition({
           ...signalForm,
-          scope: "global",
-          company_id: null,
+          scope,
+          company_id,
         });
         setSignalDefs((prev) => [...prev, created]);
       }
@@ -649,6 +671,49 @@ export default function SettingsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="signal-scope">Scope</Label>
+              <Select
+                value={signalForm.scope}
+                onValueChange={(v) =>
+                  setSignalForm((p) => ({
+                    ...p,
+                    scope: v as "global" | "company",
+                    company_id: v === "global" ? null : p.company_id,
+                  }))
+                }
+              >
+                <SelectTrigger id="signal-scope">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="global">Global</SelectItem>
+                  <SelectItem value="company">Company-Specific</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {signalForm.scope === "company" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="signal-company">Company</Label>
+                <Select
+                  value={signalForm.company_id ?? ""}
+                  onValueChange={(v) =>
+                    setSignalForm((p) => ({ ...p, company_id: v || null }))
+                  }
+                >
+                  <SelectTrigger id="signal-company">
+                    <SelectValue placeholder="Select a company" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {companies.map((c) => (
+                      <SelectItem key={c.company_id} value={c.company_id}>
+                        {c.company_name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="signal-name">Name</Label>
               <div className="flex items-center gap-2">

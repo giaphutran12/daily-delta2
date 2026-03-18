@@ -365,7 +365,7 @@ export function storeCompanySSE(
   const controller = new AbortController();
 
   getAuthHeaders().then((authHeaders) => {
-    fetch(`${API_BASE}/store-company`, {
+    fetch(`${API_BASE}/companies`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({ website_url: websiteUrl }),
