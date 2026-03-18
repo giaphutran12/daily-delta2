@@ -19,20 +19,26 @@ export type RunAgentsRequest = z.infer<typeof RunAgentsRequestSchema>;
 
 // ---------- Signal Definition ----------
 
-export const SignalDefinitionCreateSchema = z.object({
+const SignalDefinitionBaseSchema = z.object({
   name: z.string().min(1, 'Name required'),
   signal_type: z.string().min(1, 'Signal type required'),
   display_name: z.string().min(1, 'Display name required'),
   target_url: z.string().url('Invalid URL'),
   search_instructions: z.string().min(1, 'Search instructions required'),
   scope: z.enum(['global', 'company']).default('global'),
+  company_id: z.string().nullish(),
   enabled: z.boolean().default(true),
   sort_order: z.number().int().default(0),
 });
 
+export const SignalDefinitionCreateSchema = SignalDefinitionBaseSchema.refine(
+  (data) => data.scope !== 'company' || (data.company_id != null && data.company_id.length > 0),
+  { message: 'company_id is required when scope is company', path: ['company_id'] },
+);
+
 export type SignalDefinitionCreate = z.infer<typeof SignalDefinitionCreateSchema>;
 
-export const SignalDefinitionUpdateSchema = SignalDefinitionCreateSchema.partial();
+export const SignalDefinitionUpdateSchema = SignalDefinitionBaseSchema.partial();
 
 export type SignalDefinitionUpdate = z.infer<typeof SignalDefinitionUpdateSchema>;
 
