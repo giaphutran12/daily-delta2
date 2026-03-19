@@ -210,7 +210,7 @@ export async function getUserSettings(): Promise<UserSettings> {
 }
 
 export async function setEmail(email: string, frequency?: EmailFrequency): Promise<void> {
-  await authFetch(`${API_BASE}/set-email`, {
+  await authFetch(`${API_BASE}/user-settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, email_frequency: frequency }),
@@ -218,7 +218,7 @@ export async function setEmail(email: string, frequency?: EmailFrequency): Promi
 }
 
 export async function setEmailFrequency(frequency: EmailFrequency): Promise<void> {
-  await authFetch(`${API_BASE}/set-email-frequency`, {
+  await authFetch(`${API_BASE}/user-settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email_frequency: frequency }),

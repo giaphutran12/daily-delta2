@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import {
   getUserSettings,
+  setEmail,
   setEmailFrequency,
   getOrgMembers,
   inviteMember,
@@ -114,6 +115,10 @@ export default function SettingsPage() {
     useAuth();
 
   const [frequency, setFrequencyState] = useState<EmailFrequency>("only_on_run");
+  const [deliveryEmail, setDeliveryEmail] = useState("");
+  const [isSavingEmail, setIsSavingEmail] = useState(false);
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailSuccess, setEmailSuccess] = useState<string | null>(null);
 
   const [members, setMembers] = useState<OrganizationMember[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -144,10 +149,27 @@ export default function SettingsPage() {
   useEffect(() => {
     getUserSettings()
       .then((s) => {
+        if (s.email) setDeliveryEmail(s.email);
+        else if (user?.email) setDeliveryEmail(user.email);
         if (s.email_frequency) setFrequencyState(s.email_frequency);
       })
       .catch(() => {});
-  }, []);
+  }, [user?.email]);
+
+  const handleSaveEmail = async () => {
+    if (!deliveryEmail.trim()) return;
+    setIsSavingEmail(true);
+    setEmailError(null);
+    setEmailSuccess(null);
+    try {
+      await setEmail(deliveryEmail.trim());
+      setEmailSuccess("Delivery email updated successfully.");
+    } catch (err) {
+      setEmailError((err as Error).message ?? "Failed to update email.");
+    } finally {
+      setIsSavingEmail(false);
+    }
+  };
 
   useEffect(() => {
     if (!currentOrg) return;
@@ -354,15 +376,28 @@ export default function SettingsPage() {
             <CardContent>
               <div className="max-w-sm space-y-2">
                 <Label htmlFor="email-display">Email Address</Label>
-                <Input
-                  id="email-display"
-                  value={user?.email ?? ""}
-                  disabled
-                  className="opacity-70"
-                />
+                <div className="flex gap-2">
+                  <Input
+                    id="email-display"
+                    value={deliveryEmail}
+                    onChange={(e) => setDeliveryEmail(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button
+                    onClick={handleSaveEmail}
+                    disabled={isSavingEmail || !deliveryEmail.trim()}
+                  >
+                    {isSavingEmail ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+                {emailError && (
+                  <p className="text-sm text-destructive">{emailError}</p>
+                )}
+                {emailSuccess && (
+                  <p className="text-sm text-green-600">{emailSuccess}</p>
+                )}
                 <p className="text-xs text-muted-foreground">
-                  This is the email you signed up with. Reports are sent here
-                  automatically.
+                  Reports will be sent to this email address.
                 </p>
               </div>
             </CardContent>

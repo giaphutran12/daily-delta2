@@ -340,7 +340,7 @@ export async function sendReportEmail(
     if (!apiKey) throw new Error("RESEND_API_KEY must be configured");
 
     const fromEmail =
-      process.env.RESEND_FROM_EMAIL || "signals@dailydelta.com";
+      process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
     console.log(
       `[Email] Building email for ${company.company_name} — ai_summary present: ${!!report.ai_summary}, type: ${report.ai_summary_type || "none"}`,
     );
@@ -406,7 +406,7 @@ export async function sendInviteEmail(
     if (!apiKey) throw new Error("RESEND_API_KEY must be configured");
 
     const fromEmail =
-      process.env.RESEND_FROM_EMAIL || "signals@dailydelta.com";
+      process.env.RESEND_FROM_EMAIL || "onboarding@resend.dev";
     const frontendUrl =
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const acceptUrl = `${frontendUrl}/invite/accept?token=${acceptToken}`;
