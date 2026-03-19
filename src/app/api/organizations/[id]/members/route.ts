@@ -76,11 +76,16 @@ export const POST = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
     return Response.json({
       success: true,
       pending: true,
+      email_sent: emailSent,
       token,
       organization_name: orgName,
-      message: alreadyPending
-        ? `Invitation re-sent to ${email.trim()}`
-        : `Invitation sent to ${email.trim()}. They have 7 days to accept.`,
+      message: emailSent
+        ? alreadyPending
+          ? `Invitation re-sent to ${email.trim()}`
+          : `Invitation sent to ${email.trim()}. They have 7 days to accept.`
+        : alreadyPending
+          ? `Invitation exists but email re-send failed. Share the invite link manually.`
+          : `Invitation created but email delivery failed. Share the invite link manually.`,
     });
   } catch (err: unknown) {
     if (err instanceof Error && err.message === "User is already a member of this organization") {

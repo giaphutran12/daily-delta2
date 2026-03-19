@@ -151,7 +151,12 @@ export async function runIntelligenceAgents(
     });
   });
 
-  await Promise.allSettled(agentPromises);
+  const results = await Promise.allSettled(agentPromises);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error("[ORCHESTRATOR] Agent failed:", result.reason);
+    }
+  }
   return allFindings;
 }
 
@@ -284,6 +289,11 @@ export async function runIntelligenceAgentsSilent(
     });
   });
 
-  await Promise.allSettled(agentPromises);
+  const results = await Promise.allSettled(agentPromises);
+  for (const result of results) {
+    if (result.status === "rejected") {
+      console.error("[ORCHESTRATOR] Agent failed:", result.reason);
+    }
+  }
   return allFindings;
 }

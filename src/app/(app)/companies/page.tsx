@@ -151,11 +151,11 @@ export default function CompaniesPage() {
     storeCompanySSE(
       finalUrl,
       (event) => {
-        if (event.type === "company_stored") {
-          setAddMsg("Company stored! Running discovery...");
-          const data = event.data as { company?: { company_id?: string } };
-          storedCompanyId = data?.company?.company_id ?? null;
-        }
+       if (event.type === "company_stored") {
+           setAddMsg("Company stored! Running discovery...");
+           const data = event.data as { company_id?: string };
+           storedCompanyId = data?.company_id ?? null;
+         }
       },
       async () => {
         if (storedCompanyId && pendingSignals.length > 0) {
@@ -368,7 +368,7 @@ export default function CompaniesPage() {
                           <div className="flex flex-col gap-1.5">
                             <Label>Target URL</Label>
                             <Input
-                              placeholder="e.g. {website_url}/blog"
+                              placeholder="e.g. {website_url}/blog or https://example.com/blog"
                               value={pendingForm.target_url}
                               onChange={(e) => setPendingForm((p) => ({ ...p, target_url: e.target.value }))}
                             />
@@ -683,7 +683,7 @@ export default function CompaniesPage() {
                       <div className="flex flex-col gap-1.5">
                         <Label>Target URL</Label>
                         <Input
-                          placeholder="e.g. {website_url}/blog"
+                          placeholder="e.g. {website_url}/blog or https://example.com/blog"
                           value={editSignalForm.target_url}
                           onChange={(e) => setEditSignalForm((f) => ({ ...f, target_url: e.target.value }))}
                         />

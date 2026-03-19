@@ -128,6 +128,7 @@ export default function SettingsPage() {
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+  const [cancelInviteError, setCancelInviteError] = useState<string | null>(null);
 
   const [newOrgName, setNewOrgName] = useState("");
   const [createOrgLoading, setCreateOrgLoading] = useState(false);
@@ -250,10 +251,13 @@ export default function SettingsPage() {
 
   const handleCancelInvite = async (invitationId: string) => {
     if (!currentOrg) return;
+    setCancelInviteError(null);
     try {
       await cancelInvitation(currentOrg.organization_id, invitationId);
       setMembers((prev) => prev.filter((m) => m.id !== invitationId));
-    } catch {
+    } catch (err) {
+      console.error('[SETTINGS] Failed to cancel invite:', err);
+      setCancelInviteError((err as Error).message || "Failed to cancel invitation");
     } finally {
       setCancelInviteId(null);
     }
@@ -680,11 +684,15 @@ export default function SettingsPage() {
                         );
                       })}
                     </TableBody>
-                  </Table>
-                )}
+                   </Table>
+                 )}
 
-                {canManage && (
-                  <div className="space-y-2 pt-2">
+                 {cancelInviteError && (
+                   <p className="text-sm text-destructive">{cancelInviteError}</p>
+                 )}
+
+                 {canManage && (
+                   <div className="space-y-2 pt-2">
                     <Label className="text-sm font-medium">
                       Invite New Member
                     </Label>

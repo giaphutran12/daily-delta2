@@ -23,7 +23,7 @@ const SignalDefinitionBaseSchema = z.object({
   name: z.string().min(1, 'Name required'),
   signal_type: z.string().min(1, 'Signal type required'),
   display_name: z.string().min(1, 'Display name required'),
-  target_url: z.string().url('Invalid URL'),
+  target_url: z.string().min(1, 'Target URL required'),
   search_instructions: z.string().min(1, 'Search instructions required'),
   scope: z.enum(['global', 'company']).default('global'),
   company_id: z.string().nullish(),

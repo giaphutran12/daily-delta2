@@ -137,9 +137,13 @@ export async function removeMember(orgId: string, userId: string): Promise<void>
 }
 
 export async function cancelInvitation(orgId: string, invitationId: string): Promise<void> {
-  await authFetch(`${API_BASE}/organizations/${orgId}/invitations/${invitationId}`, {
+  const res = await authFetch(`${API_BASE}/organizations/${orgId}/invitations/${invitationId}`, {
     method: "DELETE",
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || "Failed to cancel invitation");
+  }
 }
 
 export async function acceptInvitation(token: string): Promise<{
@@ -158,7 +162,11 @@ export async function acceptInvitation(token: string): Promise<{
 }
 
 export async function getInvitationDetails(token: string): Promise<Invitation & { organization_name?: string; invited_by_email?: string }> {
-  const res = await fetch(`${API_BASE}/invitations/${token}`);
+  const res = await authFetch(`${API_BASE}/invitations/${token}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error || "Failed to fetch invitation details");
+  }
   return res.json();
 }
 

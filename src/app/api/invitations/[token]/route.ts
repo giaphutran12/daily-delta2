@@ -1,10 +1,21 @@
 import { NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { authenticateRequest, ApiAuthError } from "@/lib/auth/api-auth";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ token: string }> },
 ) {
+  // Auth gate: require valid Bearer token (user may not be in the org yet, so no withOrg)
+  try {
+    await authenticateRequest(req);
+  } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return Response.json({ error: error.message }, { status: error.status });
+    }
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { token } = await params;
   const supabase = createAdminClient();
 
