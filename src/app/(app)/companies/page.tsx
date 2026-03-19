@@ -2,13 +2,14 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Play, X } from "lucide-react";
+import { Plus, Trash2, Play, X, Settings2 } from "lucide-react";
 import {
   getCompanies,
   deleteCompany,
   storeCompanySSE,
   getSignalDefinitions,
   createSignalDefinition,
+  deleteSignalDefinition,
   type Company,
 } from "@/lib/api/client";
 import type { SignalDefinition } from "@/lib/types";
@@ -87,6 +88,15 @@ export default function CompaniesPage() {
     target_url: "",
     search_instructions: "",
   });
+
+  // Edit company signals
+  const [editSignalsCompany, setEditSignalsCompany] = useState<Company | null>(null);
+  const [editSignalsOpen, setEditSignalsOpen] = useState(false);
+  const [companySignals, setCompanySignals] = useState<SignalDefinition[]>([]);
+  const [companySignalsLoading, setCompanySignalsLoading] = useState(false);
+  const [editSignalForm, setEditSignalForm] = useState({ name: "", target_url: "", search_instructions: "" });
+  const [editSignalFormOpen, setEditSignalFormOpen] = useState(false);
+  const [editSignalError, setEditSignalError] = useState("");
 
   const fetchCompanies = useCallback(async () => {
     try {
@@ -175,6 +185,48 @@ export default function CompaniesPage() {
         setAddMsg(`Error: ${err}`);
       },
     );
+  };
+
+  const openEditSignals = async (company: Company) => {
+    setEditSignalsCompany(company);
+    setEditSignalsOpen(true);
+    setCompanySignalsLoading(true);
+    setEditSignalError("");
+    setEditSignalFormOpen(false);
+    try {
+      const sigs = await getSignalDefinitions(company.company_id);
+      setCompanySignals(sigs.filter((s) => s.scope === "company"));
+    } catch {
+      setEditSignalError("Failed to load signals");
+    } finally {
+      setCompanySignalsLoading(false);
+    }
+  };
+
+  const handleCreateCompanySignal = async () => {
+    if (!editSignalsCompany || !editSignalForm.name.trim()) return;
+    setEditSignalError("");
+    try {
+      const created = await createSignalDefinition({
+        name: editSignalForm.name,
+        signal_type: slugify(editSignalForm.name),
+        display_name: editSignalForm.name,
+        target_url: editSignalForm.target_url,
+        search_instructions: editSignalForm.search_instructions,
+        scope: "company",
+        company_id: editSignalsCompany.company_id,
+      });
+      setCompanySignals((prev) => [...prev, created]);
+      setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
+      setEditSignalFormOpen(false);
+    } catch {
+      setEditSignalError("Failed to create signal");
+    }
+  };
+
+  const handleDeleteCompanySignal = async (id: string) => {
+    await deleteSignalDefinition(id);
+    setCompanySignals((prev) => prev.filter((s) => s.id !== id));
   };
 
   const onRunCompany = (company: Company) => {
@@ -283,37 +335,69 @@ export default function CompaniesPage() {
                         </button>
                       </div>
                     ))}
-
-                    {pendingFormOpen ? (
-                      <div className="flex flex-col gap-1.5 pt-1">
-                        <Input
-                          placeholder="Signal name"
-                          value={pendingForm.name}
-                          onChange={(e) => setPendingForm((p) => ({ ...p, name: e.target.value }))}
-                          className="h-7 text-xs"
+                    <Dialog
+                      open={pendingFormOpen}
+                      onOpenChange={(open) => {
+                        setPendingFormOpen(open);
+                        if (!open) setPendingForm({ name: "", target_url: "", search_instructions: "" });
+                      }}
+                    >
+                      <DialogTrigger render={
+                        <button
+                          type="button"
                           disabled={addStoring}
+                          className="w-full rounded-md border border-dashed border-muted-foreground/40 py-1.5 text-xs text-muted-foreground hover:border-muted-foreground/70 hover:text-foreground transition-colors mt-1"
                         />
-                        <Input
-                          placeholder="Target URL (e.g. {website_url})"
-                          value={pendingForm.target_url}
-                          onChange={(e) => setPendingForm((p) => ({ ...p, target_url: e.target.value }))}
-                          className="h-7 text-xs"
-                          disabled={addStoring}
-                        />
-                        <Textarea
-                          placeholder="What to look for..."
-                          value={pendingForm.search_instructions}
-                          onChange={(e) => setPendingForm((p) => ({ ...p, search_instructions: e.target.value }))}
-                          rows={2}
-                          className="text-xs resize-none"
-                          disabled={addStoring}
-                        />
-                        <div className="flex gap-1">
+                      }>
+                        + Add Signal
+                      </DialogTrigger>
+                      <DialogContent className="sm:max-w-sm">
+                        <DialogHeader>
+                          <DialogTitle>Add Custom Signal</DialogTitle>
+                        </DialogHeader>
+                        <div className="flex flex-col gap-3 py-2">
+                          <div className="flex flex-col gap-1.5">
+                            <Label>Signal name</Label>
+                            <Input
+                              placeholder="e.g. Blog Scanner"
+                              value={pendingForm.name}
+                              onChange={(e) => setPendingForm((p) => ({ ...p, name: e.target.value }))}
+                              autoFocus
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <Label>Target URL</Label>
+                            <Input
+                              placeholder="e.g. {website_url}/blog"
+                              value={pendingForm.target_url}
+                              onChange={(e) => setPendingForm((p) => ({ ...p, target_url: e.target.value }))}
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1.5">
+                            <Label>Search instructions</Label>
+                            <Textarea
+                              placeholder="What to look for..."
+                              value={pendingForm.search_instructions}
+                              onChange={(e) => setPendingForm((p) => ({ ...p, search_instructions: e.target.value }))}
+                              rows={3}
+                              className="resize-none"
+                            />
+                          </div>
+                        </div>
+                        <DialogFooter>
                           <Button
                             type="button"
-                            size="sm"
-                            className="h-6 text-xs flex-1"
-                            disabled={!pendingForm.name.trim() || !pendingForm.target_url.trim() || !pendingForm.search_instructions.trim()}
+                            variant="outline"
+                            onClick={() => {
+                              setPendingFormOpen(false);
+                              setPendingForm({ name: "", target_url: "", search_instructions: "" });
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={!pendingForm.name.trim()}
                             onClick={() => {
                               setPendingSignals((prev) => [
                                 ...prev,
@@ -323,32 +407,11 @@ export default function CompaniesPage() {
                               setPendingFormOpen(false);
                             }}
                           >
-                            Add
+                            Add Signal
                           </Button>
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-6 text-xs"
-                            onClick={() => {
-                              setPendingFormOpen(false);
-                              setPendingForm({ name: "", target_url: "", search_instructions: "" });
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setPendingFormOpen(true)}
-                        disabled={addStoring}
-                        className="w-full rounded-md border border-dashed border-muted-foreground/40 py-1.5 text-xs text-muted-foreground hover:border-muted-foreground/70 hover:text-foreground transition-colors mt-1"
-                      >
-                        + Add Signal
-                      </button>
-                    )}
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                   </div>
                 </div>
               </div>
@@ -460,6 +523,15 @@ export default function CompaniesPage() {
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          onClick={() => openEditSignals(company)}
+                          title="Edit custom signals"
+                        >
+                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="sr-only">Edit signals for {company.company_name}</span>
+                        </Button>
+                        <Button
                           size="sm"
                           variant="outline"
                           onClick={() => onRunCompany(company)}
@@ -518,6 +590,141 @@ export default function CompaniesPage() {
           </Table>
         </div>
       )}
+
+      {/* Edit Company Signals Dialog */}
+      <Dialog
+        open={editSignalsOpen}
+        onOpenChange={(open) => {
+          setEditSignalsOpen(open);
+          if (!open) {
+            setEditSignalsCompany(null);
+            setCompanySignals([]);
+            setEditSignalFormOpen(false);
+            setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
+            setEditSignalError("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Custom Signals — {editSignalsCompany?.company_name}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 py-2">
+            {editSignalError && (
+              <p className="text-xs text-destructive">{editSignalError}</p>
+            )}
+
+            {companySignalsLoading ? (
+              <div className="flex flex-col gap-1.5">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1.5">
+                {companySignals.length === 0 && !editSignalFormOpen && (
+                  <p className="text-sm text-muted-foreground py-2">
+                    No custom signals for this company. Add one to track specific topics.
+                  </p>
+                )}
+                {companySignals.map((sig) => (
+                  <div
+                    key={sig.id}
+                    className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium">{sig.display_name}</div>
+                      {sig.target_url && (
+                        <div className="text-xs text-muted-foreground truncate">{sig.target_url}</div>
+                      )}
+                      {sig.search_instructions && (
+                        <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{sig.search_instructions}</div>
+                      )}
+                    </div>
+                    <Button
+                      size="icon-sm"
+                      variant="ghost"
+                      onClick={() => handleDeleteCompanySignal(sig.id)}
+                    >
+                      <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
+                    </Button>
+                  </div>
+                ))}
+
+                <Dialog
+                  open={editSignalFormOpen}
+                  onOpenChange={(open) => {
+                    setEditSignalFormOpen(open);
+                    if (!open) setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
+                  }}
+                >
+                  <DialogTrigger render={
+                    <button
+                      className="w-full rounded-md border border-dashed border-muted-foreground/40 py-2 text-sm text-muted-foreground hover:border-muted-foreground/70 hover:text-foreground transition-colors"
+                    />
+                  }>
+                    + Add Signal
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-sm">
+                    <DialogHeader>
+                      <DialogTitle>Add Custom Signal</DialogTitle>
+                    </DialogHeader>
+                    <div className="flex flex-col gap-3 py-2">
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Signal name</Label>
+                        <Input
+                          placeholder="e.g. Blog Scanner"
+                          value={editSignalForm.name}
+                          onChange={(e) => setEditSignalForm((f) => ({ ...f, name: e.target.value }))}
+                          autoFocus
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Target URL</Label>
+                        <Input
+                          placeholder="e.g. {website_url}/blog"
+                          value={editSignalForm.target_url}
+                          onChange={(e) => setEditSignalForm((f) => ({ ...f, target_url: e.target.value }))}
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        <Label>Search instructions</Label>
+                        <Textarea
+                          placeholder="What to look for..."
+                          value={editSignalForm.search_instructions}
+                          onChange={(e) => setEditSignalForm((f) => ({ ...f, search_instructions: e.target.value }))}
+                          rows={3}
+                          className="resize-none"
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          setEditSignalFormOpen(false);
+                          setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        disabled={!editSignalForm.name.trim()}
+                        onClick={handleCreateCompanySignal}
+                      >
+                        Add Signal
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
