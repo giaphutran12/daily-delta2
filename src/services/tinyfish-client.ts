@@ -116,38 +116,42 @@ export function startTinyfishAgent(
             try {
               const data = JSON.parse(line.slice(6));
 
-              if (data.streamingUrl && !streamingUrlSent) {
+              if (data.type === "STREAMING_URL" && data.streaming_url && !streamingUrlSent) {
                 streamingUrlSent = true;
-                callbacks.onStreamingUrl(data.streamingUrl);
+                callbacks.onStreamingUrl(data.streaming_url);
                 callbacks.onBrowsing("Agent is browsing the website...");
               }
 
-              if (data.type === "STEP" || data.purpose || data.action) {
+              if (data.type === "PROGRESS" && data.purpose) {
+                collectedSteps.push(data.purpose);
+                callbacks.onStatus(data.purpose);
+              }
+
+              if (data.type === "STEP" || (!data.type && (data.purpose || data.action))) {
                 const message =
                   data.message || data.purpose || data.action || "Processing...";
                 collectedSteps.push(message);
                 callbacks.onStatus(message);
               }
 
-              if (
-                (data.type === "COMPLETE" || data.status === "COMPLETED") &&
-                data.resultJson
-              ) {
+              if (data.type === "COMPLETE" || data.status === "COMPLETED") {
                 completedNormally = true;
+                const raw = data.result ?? data.resultJson ?? null;
                 let result: unknown;
                 try {
-                  result =
-                    typeof data.resultJson === "string"
-                      ? JSON.parse(data.resultJson)
-                      : data.resultJson;
+                  result = typeof raw === "string" ? JSON.parse(raw) : raw;
                 } catch {
-                  result = data.resultJson;
+                  result = raw;
                 }
-                callbacks.onComplete(result);
+                if (data.status === "COMPLETED" || !data.error) {
+                  callbacks.onComplete(result);
+                } else {
+                  callbacks.onError(data.error || "Agent run failed");
+                }
               }
 
               if (data.type === "ERROR") {
-                callbacks.onError(data.message || "Agent encountered an error");
+                callbacks.onError(data.message || data.error || "Agent encountered an error");
               }
             } catch {}
           }

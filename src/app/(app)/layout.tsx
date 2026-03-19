@@ -30,6 +30,7 @@ import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -98,30 +99,32 @@ function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<SidebarMenuButton className="h-auto py-2" />}>
-                  <Avatar className="h-6 w-6">
-                    <AvatarFallback className="text-xs">{userInitials}</AvatarFallback>
-                  </Avatar>
-                  <div className="flex flex-col items-start min-w-0">
-                    <span className="text-xs font-medium truncate max-w-[140px]">
-                      {user?.email ?? "Account"}
+              <DropdownMenuTrigger className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 ring-sidebar-ring outline-hidden data-[slot=sidebar-menu-button]">
+                <Avatar className="h-6 w-6">
+                  <AvatarFallback className="text-xs">{userInitials}</AvatarFallback>
+                </Avatar>
+                <div className="flex flex-col items-start min-w-0">
+                  <span className="text-xs font-medium truncate max-w-[140px]">
+                    {user?.email ?? "Account"}
+                  </span>
+                  {currentOrg && (
+                    <span className="text-xs text-muted-foreground truncate max-w-[140px]">
+                      {currentOrg.name}
                     </span>
-                    {currentOrg && (
-                      <span className="text-xs text-muted-foreground truncate max-w-[140px]">
-                        {currentOrg.name}
-                      </span>
-                    )}
-                  </div>
-                </DropdownMenuTrigger>
+                  )}
+                </div>
+              </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="start" className="w-56">
-                <DropdownMenuLabel className="font-normal">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="text-xs text-muted-foreground">{user?.email}</span>
-                    {currentOrg && (
-                      <span className="text-xs text-muted-foreground">{currentOrg.name}</span>
-                    )}
-                  </div>
-                </DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="font-normal">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-muted-foreground">{user?.email}</span>
+                      {currentOrg && (
+                        <span className="text-xs text-muted-foreground">{currentOrg.name}</span>
+                      )}
+                    </div>
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignOut}>
                   <LogOut className="mr-2 h-4 w-4" />
