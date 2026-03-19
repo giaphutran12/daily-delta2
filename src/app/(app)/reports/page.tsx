@@ -267,6 +267,9 @@ export default function ReportsPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [emailingId, setEmailingId] = useState<string | null>(null);
   const [emailSentId, setEmailSentId] = useState<string | null>(null);
+  const [emailErrorId, setEmailErrorId] = useState<string | null>(null);
+  const [emailErrorMsg, setEmailErrorMsg] = useState<string>("");
+  const [previewErrorId, setPreviewErrorId] = useState<string | null>(null);
   const [deleteDialogId, setDeleteDialogId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -314,19 +317,30 @@ export default function ReportsPage() {
   const handleSendEmail = async (reportId: string) => {
     if (emailingId) return;
     setEmailingId(reportId);
+    setEmailErrorId(null);
     try {
       const result = await sendReportEmail(reportId);
       if (result.success) {
         setEmailSentId(reportId);
         setTimeout(() => setEmailSentId(null), 4000);
+      } else {
+        setEmailErrorId(reportId);
+        setEmailErrorMsg(result.error || "Failed to send email");
+        setTimeout(() => setEmailErrorId(null), 4000);
       }
-    } catch {
+    } catch (error) {
+      setEmailErrorId(reportId);
+      setEmailErrorMsg(
+        error instanceof Error ? error.message : "Failed to send email"
+      );
+      setTimeout(() => setEmailErrorId(null), 4000);
     } finally {
       setEmailingId(null);
     }
   };
 
   const handlePreview = async (reportId: string) => {
+    setPreviewErrorId(null);
     try {
       const html = await previewReportEmail(reportId);
       const win = window.open("", "_blank");
@@ -334,7 +348,10 @@ export default function ReportsPage() {
         win.document.write(html);
         win.document.close();
       }
-    } catch {}
+    } catch (error) {
+      setPreviewErrorId(reportId);
+      setTimeout(() => setPreviewErrorId(null), 4000);
+    }
   };
 
   const toggleReport = (reportId: string) =>
@@ -436,55 +453,71 @@ export default function ReportsPage() {
                         {report.trigger === "cron" ? "Scheduled" : "Manual"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Preview email"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handlePreview(report.report_id);
-                          }}
-                        >
-                          <EyeIcon className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          title="Send email"
-                          disabled={
-                            emailingId === report.report_id ||
-                            emailSentId === report.report_id
-                          }
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSendEmail(report.report_id);
-                          }}
-                        >
-                          {emailSentId === report.report_id ? (
-                            <span className="text-xs text-green-600">Sent</span>
-                          ) : (
-                            <MailIcon className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setDeleteDialogId(report.report_id);
-                          }}
-                        >
-                          <TrashIcon className="h-4 w-4" />
-                        </Button>
-                        <ChevronDownIcon
-                          aria-hidden
-                          className={`h-4 w-4 text-muted-foreground transition-transform ${isSelected ? "rotate-180" : ""}`}
-                        />
-                      </div>
-                    </TableCell>
+                     <TableCell className="text-right">
+                       <div className="flex flex-col items-end gap-1">
+                         <div className="flex items-center justify-end gap-1">
+                           <Button
+                             variant="ghost"
+                             size="sm"
+                             title="Preview email"
+                             disabled={previewErrorId === report.report_id}
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               handlePreview(report.report_id);
+                             }}
+                           >
+                             <EyeIcon className="h-4 w-4" />
+                           </Button>
+                           <Button
+                             variant="ghost"
+                             size="sm"
+                             title="Send email"
+                             disabled={
+                               emailingId === report.report_id ||
+                               emailSentId === report.report_id ||
+                               emailErrorId === report.report_id
+                             }
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               handleSendEmail(report.report_id);
+                             }}
+                           >
+                             {emailSentId === report.report_id ? (
+                               <span className="text-xs text-green-600">Sent</span>
+                             ) : emailErrorId === report.report_id ? (
+                               <span className="text-xs text-red-600">Error</span>
+                             ) : (
+                               <MailIcon className="h-4 w-4" />
+                             )}
+                           </Button>
+                           <Button
+                             variant="ghost"
+                             size="sm"
+                             className="text-destructive hover:text-destructive"
+                             onClick={(e) => {
+                               e.stopPropagation();
+                               setDeleteDialogId(report.report_id);
+                             }}
+                           >
+                             <TrashIcon className="h-4 w-4" />
+                           </Button>
+                           <ChevronDownIcon
+                             aria-hidden
+                             className={`h-4 w-4 text-muted-foreground transition-transform ${isSelected ? "rotate-180" : ""}`}
+                           />
+                         </div>
+                         {emailErrorId === report.report_id && (
+                           <span className="text-xs text-red-600">
+                             {emailErrorMsg}
+                           </span>
+                         )}
+                         {previewErrorId === report.report_id && (
+                           <span className="text-xs text-red-600">
+                             Preview failed
+                           </span>
+                         )}
+                       </div>
+                     </TableCell>
                   </TableRow>
                 );
               })}
