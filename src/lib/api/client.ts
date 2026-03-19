@@ -191,7 +191,7 @@ export async function sendReportEmail(
 }
 
 export async function previewReportEmail(reportId: string): Promise<string> {
-  const res = await authFetch(`${API_BASE}/reports/${reportId}/preview`);
+  const res = await authFetch(`${API_BASE}/reports/${reportId}?preview=true`);
   return res.text();
 }
 
