@@ -127,8 +127,10 @@ async function storeSignals(
 async function getOrgRecipients(organizationId: string): Promise<OrgRecipient[]> {
   const members = await getOrganizationMembers(organizationId);
 
+  const activeMembers = members.filter((m): m is typeof m & { user_id: string } => m.user_id !== null);
+
   const settingsRows = await Promise.all(
-    members.map(async (member) => {
+    activeMembers.map(async (member) => {
       const settings = await getUserSettings(member.user_id);
       return {
         userId: member.user_id,

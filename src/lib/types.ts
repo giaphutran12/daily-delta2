@@ -21,10 +21,13 @@ export interface Organization {
 export interface OrganizationMember {
   id: string;
   organization_id: string;
-  user_id: string;
+  user_id: string | null;
   role: 'owner' | 'admin' | 'member';
-  joined_at: string;
+  joined_at: string | null;
   email?: string;
+  status?: 'active' | 'pending';
+  expires_at?: string;
+  invited_by_email?: string;
 }
 
 export interface Company {

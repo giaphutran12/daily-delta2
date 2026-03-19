@@ -122,7 +122,7 @@ export async function inviteMember(
   email: string,
   role?: string,
 ): Promise<{ success: boolean; error?: string; message?: string; pending?: boolean }> {
-  const res = await authFetch(`${API_BASE}/organizations/${orgId}/invite`, {
+  const res = await authFetch(`${API_BASE}/organizations/${orgId}/members`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, role }),

@@ -8,6 +8,7 @@ import {
   getOrgMembers,
   inviteMember,
   removeMember,
+  cancelInvitation,
   createOrganization,
   getSignalDefinitions,
   createSignalDefinition,
@@ -145,6 +146,7 @@ export default function SettingsPage() {
   const [deleteSignalId, setDeleteSignalId] = useState<string | null>(null);
 
   const [removeMemberId, setRemoveMemberId] = useState<string | null>(null);
+  const [cancelInviteId, setCancelInviteId] = useState<string | null>(null);
 
   useEffect(() => {
     getUserSettings()
@@ -243,6 +245,17 @@ export default function SettingsPage() {
     } catch {
     } finally {
       setRemoveMemberId(null);
+    }
+  };
+
+  const handleCancelInvite = async (invitationId: string) => {
+    if (!currentOrg) return;
+    try {
+      await cancelInvitation(currentOrg.organization_id, invitationId);
+      setMembers((prev) => prev.filter((m) => m.id !== invitationId));
+    } catch {
+    } finally {
+      setCancelInviteId(null);
     }
   };
 
@@ -597,47 +610,75 @@ export default function SettingsPage() {
                       <TableRow>
                         <TableHead>Member</TableHead>
                         <TableHead>Role</TableHead>
-                        {isOwner && (
+                        {canManage && (
                           <TableHead className="text-right">Actions</TableHead>
                         )}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {members.map((m) => (
-                        <TableRow key={m.id}>
-                          <TableCell className="font-medium">
-                            {m.email ?? m.user_id}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={
-                                m.role === "owner"
-                                  ? "default"
-                                  : m.role === "admin"
-                                    ? "secondary"
-                                    : "outline"
-                              }
-                            >
-                              {ROLE_LABELS[m.role] ?? m.role}
-                            </Badge>
-                          </TableCell>
-                          {isOwner && (
-                            <TableCell className="text-right">
-                              {m.role !== "owner" && (
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="text-destructive hover:text-destructive"
-                                  aria-label={`Remove ${m.email ?? m.user_id}`}
-                                  onClick={() => setRemoveMemberId(m.user_id)}
-                                >
-                                  <TrashIcon className="h-4 w-4" />
-                                </Button>
-                              )}
+                      {members.map((m) => {
+                        const isPending = m.status === "pending";
+                        return (
+                          <TableRow
+                            key={m.id}
+                            className={isPending ? "bg-amber-50/50 dark:bg-amber-950/20" : ""}
+                          >
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2">
+                                {m.email ?? m.user_id}
+                                {isPending && (
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] border-amber-400 text-amber-600"
+                                  >
+                                    Pending
+                                  </Badge>
+                                )}
+                              </div>
                             </TableCell>
-                          )}
-                        </TableRow>
-                      ))}
+                            <TableCell>
+                              <Badge
+                                variant={
+                                  m.role === "owner"
+                                    ? "default"
+                                    : m.role === "admin"
+                                      ? "secondary"
+                                      : "outline"
+                                }
+                              >
+                                {ROLE_LABELS[m.role] ?? m.role}
+                              </Badge>
+                            </TableCell>
+                            {canManage && (
+                              <TableCell className="text-right">
+                                {isPending ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-muted-foreground hover:text-destructive"
+                                    aria-label={`Cancel invitation for ${m.email}`}
+                                    onClick={() => setCancelInviteId(m.id)}
+                                  >
+                                    Cancel
+                                  </Button>
+                                ) : (
+                                  isOwner && m.role !== "owner" && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="text-destructive hover:text-destructive"
+                                      aria-label={`Remove ${m.email ?? m.user_id}`}
+                                      onClick={() => m.user_id && setRemoveMemberId(m.user_id)}
+                                    >
+                                      <TrashIcon className="h-4 w-4" />
+                                    </Button>
+                                  )
+                                )}
+                              </TableCell>
+                            )}
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 )}
@@ -841,6 +882,31 @@ export default function SettingsPage() {
               onClick={() => deleteSignalId && handleDeleteSignal(deleteSignalId)}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!cancelInviteId}
+        onOpenChange={(open) => {
+          if (!open) setCancelInviteId(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel Invitation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will cancel the pending invitation. The invite link will no longer work.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => cancelInviteId && handleCancelInvite(cancelInviteId)}
+            >
+              Cancel Invitation
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

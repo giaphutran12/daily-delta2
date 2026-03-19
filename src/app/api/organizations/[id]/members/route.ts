@@ -10,6 +10,7 @@ import {
   getPendingInvitations,
   expireOldInvitations,
 } from "@/services/invitation-service";
+import { sendInviteEmail } from "@/services/email-service";
 
 export const GET = withOrg(async (_req: NextRequest, ctx: OrgAuthContext) => {
   try {
@@ -66,6 +67,11 @@ export const POST = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
       memberRole,
       ctx.userId,
     );
+
+    const emailSent = await sendInviteEmail(email.trim(), orgName, ctx.userEmail, memberRole, token);
+    if (!emailSent) {
+      console.warn(`[ORGS] Invitation created but email failed to send for ${email.trim()}`);
+    }
 
     return Response.json({
       success: true,

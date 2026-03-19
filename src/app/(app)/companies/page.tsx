@@ -2,13 +2,17 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Play } from "lucide-react";
+import { Plus, Trash2, Play, X } from "lucide-react";
 import {
   getCompanies,
   deleteCompany,
   storeCompanySSE,
+  getSignalDefinitions,
+  createSignalDefinition,
   type Company,
 } from "@/lib/api/client";
+import type { SignalDefinition } from "@/lib/types";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { useRuns } from "@/lib/context/RunsContext";
 import { Button } from "@/components/ui/button";
@@ -46,6 +50,20 @@ import { Badge } from "@/components/ui/badge";
 
 const SKELETON_ROWS = ["row-a", "row-b", "row-c"];
 
+interface PendingSignal {
+  id: string;
+  name: string;
+  target_url: string;
+  search_instructions: string;
+}
+
+function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
 export default function CompaniesPage() {
   const { currentOrg } = useAuth();
   const router = useRouter();
@@ -60,6 +78,15 @@ export default function CompaniesPage() {
   const [addUrl, setAddUrl] = useState("");
   const [addStoring, setAddStoring] = useState(false);
   const [addMsg, setAddMsg] = useState("");
+
+  const [globalSignals, setGlobalSignals] = useState<SignalDefinition[]>([]);
+  const [pendingSignals, setPendingSignals] = useState<PendingSignal[]>([]);
+  const [pendingFormOpen, setPendingFormOpen] = useState(false);
+  const [pendingForm, setPendingForm] = useState({
+    name: "",
+    target_url: "",
+    search_instructions: "",
+  });
 
   const fetchCompanies = useCallback(async () => {
     try {
@@ -76,6 +103,13 @@ export default function CompaniesPage() {
     setLoading(true);
     fetchCompanies().finally(() => setLoading(false));
   }, [currentOrg, fetchCompanies]);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    getSignalDefinitions()
+      .then((defs) => setGlobalSignals(defs.filter((d) => d.scope === "global" && d.enabled)))
+      .catch(() => setGlobalSignals([]));
+  }, [addOpen]);
 
   const handleDelete = async (id: string) => {
     try {
@@ -102,17 +136,37 @@ export default function CompaniesPage() {
     setAddStoring(true);
     setAddMsg("Storing company...");
 
+    let storedCompanyId: string | null = null;
+
     storeCompanySSE(
       finalUrl,
       (event) => {
         if (event.type === "company_stored") {
           setAddMsg("Company stored! Running discovery...");
+          const data = event.data as { company?: { company_id?: string } };
+          storedCompanyId = data?.company?.company_id ?? null;
         }
       },
       async () => {
+        if (storedCompanyId && pendingSignals.length > 0) {
+          await Promise.allSettled(
+            pendingSignals.map((s) =>
+              createSignalDefinition({
+                name: s.name,
+                signal_type: slugify(s.name),
+                display_name: s.name,
+                target_url: s.target_url,
+                search_instructions: s.search_instructions,
+                scope: "company",
+                company_id: storedCompanyId,
+              }),
+            ),
+          );
+        }
         setAddStoring(false);
         setAddMsg("");
         setAddUrl("");
+        setPendingSignals([]);
         setAddOpen(false);
         await fetchCompanies();
       },
@@ -164,6 +218,9 @@ export default function CompaniesPage() {
               if (!open) {
                 setAddUrl("");
                 setAddMsg("");
+                setPendingSignals([]);
+                setPendingFormOpen(false);
+                setPendingForm({ name: "", target_url: "", search_instructions: "" });
               }
             }
           }}
@@ -172,13 +229,13 @@ export default function CompaniesPage() {
             <Plus className="h-4 w-4" />
             Add Company
           </DialogTrigger>
-          <DialogContent className="sm:max-w-sm">
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Add Company</DialogTitle>
             </DialogHeader>
             <form
               onSubmit={handleAddCompany}
-              className="flex flex-col gap-3 py-2"
+              className="flex flex-col gap-4 py-2"
             >
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="company-url">Website URL</Label>
@@ -190,6 +247,112 @@ export default function CompaniesPage() {
                   disabled={addStoring}
                 />
               </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Global Signals
+                  </p>
+                  <div className="flex flex-col gap-1 rounded-md border bg-muted/30 p-2 min-h-[120px]">
+                    {globalSignals.length === 0 ? (
+                      <p className="text-xs text-muted-foreground p-1">No global signals configured</p>
+                    ) : (
+                      globalSignals.map((s) => (
+                        <div key={s.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 bg-background border text-xs">
+                          <span className="flex-1 truncate">{s.display_name}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Custom Signals
+                  </p>
+                  <div className="flex flex-col gap-1 rounded-md border bg-muted/30 p-2 min-h-[120px]">
+                    {pendingSignals.map((s) => (
+                      <div key={s.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 bg-background border text-xs">
+                        <span className="flex-1 truncate">{s.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setPendingSignals((prev) => prev.filter((p) => p.id !== s.id))}
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+
+                    {pendingFormOpen ? (
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        <Input
+                          placeholder="Signal name"
+                          value={pendingForm.name}
+                          onChange={(e) => setPendingForm((p) => ({ ...p, name: e.target.value }))}
+                          className="h-7 text-xs"
+                          disabled={addStoring}
+                        />
+                        <Input
+                          placeholder="Target URL (e.g. {website_url})"
+                          value={pendingForm.target_url}
+                          onChange={(e) => setPendingForm((p) => ({ ...p, target_url: e.target.value }))}
+                          className="h-7 text-xs"
+                          disabled={addStoring}
+                        />
+                        <Textarea
+                          placeholder="What to look for..."
+                          value={pendingForm.search_instructions}
+                          onChange={(e) => setPendingForm((p) => ({ ...p, search_instructions: e.target.value }))}
+                          rows={2}
+                          className="text-xs resize-none"
+                          disabled={addStoring}
+                        />
+                        <div className="flex gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="h-6 text-xs flex-1"
+                            disabled={!pendingForm.name.trim() || !pendingForm.target_url.trim() || !pendingForm.search_instructions.trim()}
+                            onClick={() => {
+                              setPendingSignals((prev) => [
+                                ...prev,
+                                { id: crypto.randomUUID(), ...pendingForm },
+                              ]);
+                              setPendingForm({ name: "", target_url: "", search_instructions: "" });
+                              setPendingFormOpen(false);
+                            }}
+                          >
+                            Add
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-6 text-xs"
+                            onClick={() => {
+                              setPendingFormOpen(false);
+                              setPendingForm({ name: "", target_url: "", search_instructions: "" });
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setPendingFormOpen(true)}
+                        disabled={addStoring}
+                        className="w-full rounded-md border border-dashed border-muted-foreground/40 py-1.5 text-xs text-muted-foreground hover:border-muted-foreground/70 hover:text-foreground transition-colors mt-1"
+                      >
+                        + Add Signal
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {addMsg && (
                 <p
                   className={
@@ -210,6 +373,9 @@ export default function CompaniesPage() {
                       setAddOpen(false);
                       setAddUrl("");
                       setAddMsg("");
+                      setPendingSignals([]);
+                      setPendingFormOpen(false);
+                      setPendingForm({ name: "", target_url: "", search_instructions: "" });
                     }
                   }}
                   disabled={addStoring}
