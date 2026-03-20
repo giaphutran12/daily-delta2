@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Square, X, CheckCircle2, Zap } from "lucide-react";
 import { useRuns } from "@/lib/context/RunsContext";
 import { AgentCard } from "@/components/AgentCard";
+import { useAggregateSimulatedProgress } from "@/hooks/use-simulated-progress";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -54,11 +55,13 @@ export default function ActiveRunsPage() {
     );
   }
 
-  const completedAgents =
-    selectedRun?.agents.filter((a) => a.status === "complete").length ?? 0;
   const totalAgents = selectedRun?.agents.length ?? 0;
-  const progressPct =
-    totalAgents > 0 ? Math.round((completedAgents / totalAgents) * 100) : 0;
+  const runStartedAt = selectedRun?.startedAt ?? Date.now();
+  const agentsForProgress = selectedRun?.agents.map((a) => ({
+    agentId: a.agentId,
+    status: a.status,
+  })) ?? [];
+  const progressPct = useAggregateSimulatedProgress(agentsForProgress, runStartedAt);
 
   return (
     <div className="flex flex-col gap-4">
@@ -159,7 +162,7 @@ export default function ActiveRunsPage() {
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>
-                  {completedAgents}/{totalAgents} agents complete
+                  {totalAgents} agent{totalAgents !== 1 ? "s" : ""} running
                 </span>
                 <span>{progressPct}%</span>
               </div>
@@ -196,7 +199,7 @@ export default function ActiveRunsPage() {
           {selectedRun.agents.length > 0 && (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {selectedRun.agents.map((agent) => (
-                <AgentCard key={agent.agentId} agent={agent} />
+                <AgentCard key={agent.agentId} agent={agent} startedAt={runStartedAt} />
               ))}
             </div>
           )}

@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { RunProgressRing } from "@/components/RunProgressRing";
 
 const SKELETON_ROWS = ["row-a", "row-b", "row-c"];
 
@@ -490,14 +491,20 @@ export default function CompaniesPage() {
               {filteredCompanies.map((company) => {
                 const running = isRunningOrQueued(company.company_id);
                 const queued = isQueuedOnly(company.company_id);
+                const activeRun = activeRuns.find(
+                  (r) => r.companyId === company.company_id && !r.isComplete,
+                );
                 return (
                   <TableRow key={company.company_id}>
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         {company.company_name}
-                        {running && !queued && (
+                        {activeRun && !queued && activeRun.agents.length > 0 && (
+                          <RunProgressRing run={activeRun} />
+                        )}
+                        {activeRun && !queued && activeRun.agents.length === 0 && (
                           <Badge variant="default" className="text-[10px]">
-                            Running
+                            Starting
                           </Badge>
                         )}
                         {queued && (

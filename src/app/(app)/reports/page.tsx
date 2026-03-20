@@ -183,10 +183,10 @@ function ReportDetailCard({
               </p>
             ) : (
               <Accordion>
-                {rd.sections.map((section) => (
+                {rd.sections.map((section, idx) => (
                   <AccordionItem
-                    key={`${section.signal_type}-${section.display_name}`}
-                    value={`${section.signal_type}-${section.display_name}`}
+                    key={`${section.signal_type}-${section.display_name}-${idx}`}
+                    value={`${section.signal_type}-${section.display_name}-${idx}`}
                   >
                     <AccordionTrigger>
                       <span className="flex items-center gap-2">

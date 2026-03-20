@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ActiveRun } from '../api/client';
 import { AgentCard } from '../components/AgentCard';
+import { useAggregateSimulatedProgress } from '../hooks/use-simulated-progress';
 
 interface ActiveRunsTabProps {
   activeRuns: Record<string, ActiveRun>;
@@ -56,9 +57,13 @@ export function ActiveRunsTab({ activeRuns, setActiveRuns }: ActiveRunsTabProps)
 
   const selected = selectedId ? activeRuns[selectedId] : runs[0];
 
-  const completedAgents = selected?.agents.filter((a) => a.status === 'complete').length ?? 0;
   const totalAgents = selected?.agents.length ?? 0;
-  const progressPct = totalAgents > 0 ? Math.round((completedAgents / totalAgents) * 100) : 0;
+  const runStartedAt = selected?.startedAt ?? Date.now();
+  const agentsForProgress = selected?.agents.map((a) => ({
+    agentId: a.agentId,
+    status: a.status,
+  })) ?? [];
+  const progressPct = useAggregateSimulatedProgress(agentsForProgress, runStartedAt);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -175,7 +180,7 @@ export function ActiveRunsTab({ activeRuns, setActiveRuns }: ActiveRunsTabProps)
             {!selected.isComplete && totalAgents > 0 && (
               <div className="flex flex-col gap-1">
                 <div className="flex items-center justify-between text-[10px] text-black/35">
-                  <span>{completedAgents}/{totalAgents} agents complete</span>
+                  <span>{totalAgents} agent{totalAgents !== 1 ? 's' : ''} running</span>
                   <span>{progressPct}%</span>
                 </div>
                 <div className="h-1 w-full rounded-full bg-black/8 overflow-hidden">
@@ -191,7 +196,7 @@ export function ActiveRunsTab({ activeRuns, setActiveRuns }: ActiveRunsTabProps)
             {selected.agents.length > 0 ? (
               <div className="flex flex-col gap-2">
                 {selected.agents.map((agent) => (
-                  <AgentCard key={agent.agentId} agent={agent} />
+                  <AgentCard key={agent.agentId} agent={agent} startedAt={runStartedAt} />
                 ))}
               </div>
             ) : selected.queued ? (

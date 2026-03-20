@@ -2,12 +2,15 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSimulatedProgress } from "@/hooks/use-simulated-progress";
 import type { AgentState } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 
 interface AgentCardProps {
   agent: AgentState;
+  startedAt: number;
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -49,12 +52,13 @@ function StatusDot({ status }: { status: AgentState["status"] }) {
   );
 }
 
-export function AgentCard({ agent }: AgentCardProps) {
+export function AgentCard({ agent, startedAt }: AgentCardProps) {
   const isActive =
     agent.status === "browsing" ||
     agent.status === "analyzing" ||
     agent.status === "connecting";
   const signalCount = agent.findings?.signals?.length ?? 0;
+  const progress = useSimulatedProgress(agent.status, startedAt, agent.agentId);
 
   return (
     <Card
@@ -75,6 +79,8 @@ export function AgentCard({ agent }: AgentCardProps) {
           </Badge>
         </div>
       </CardHeader>
+
+      <Progress value={progress} className="h-1 [&_[data-slot=progress-track]]:h-1 [&_[data-slot=progress-track]]:rounded-none" />
 
       <CardContent className="flex flex-col gap-3 pt-3">
         {agent.streamingUrl && isActive && (
