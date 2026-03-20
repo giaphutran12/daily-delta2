@@ -40,9 +40,7 @@ export function LoginPage({ onSwitchToSignUp }: LoginPageProps) {
 
             {/* Logo + Title */}
             <div className="text-center mb-5">
-              <div className="inline-flex items-center justify-center w-10 h-10 rounded-lg bg-[#1342FF] mb-3">
-                <span className="text-white font-bold text-lg" style={{ fontFamily: "'Ubuntu', sans-serif" }}>D</span>
-              </div>
+              <img src="/icons/icon128.png" alt="Daily Delta" className="w-10 h-10 mb-3" />
               <h1 className="text-[19px] font-semibold text-black tracking-tight" style={{ fontFamily: "'Ubuntu', sans-serif" }}>
                 Daily Delta
               </h1>

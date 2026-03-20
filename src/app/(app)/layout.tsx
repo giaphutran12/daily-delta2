@@ -1,16 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import Image from "next/image";
 import {
   Building2,
-  Zap,
   ClipboardList,
   Settings,
   LogOut,
-  Radio,
 } from "lucide-react";
 import {
   Sidebar,
@@ -24,9 +23,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,7 +39,6 @@ import { RunsProvider } from "@/lib/context/RunsContext";
 
 const NAV_ITEMS = [
   { href: "/companies", label: "Companies", icon: Building2 },
-  { href: "/active-runs", label: "Active Runs", icon: Zap },
   { href: "/reports", label: "Reports", icon: ClipboardList },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -60,18 +56,14 @@ function AppSidebar() {
   const userInitials = user?.email?.slice(0, 2).toUpperCase() ?? "U";
 
   return (
-    <Sidebar>
-      <SidebarHeader>
-        <div className="flex items-center gap-2 px-2 py-1">
-          <Radio className="h-5 w-5 text-primary" />
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold leading-none">
-              {currentOrg?.name ?? "Daily Delta"}
-            </span>
-            <span className="text-xs text-muted-foreground leading-none mt-0.5">
-              Startup Intelligence
-            </span>
-          </div>
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="border-b border-sidebar-border group-data-[collapsible=icon]:border-none">
+        <div className="flex h-8 items-center gap-2 px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
+          <Image src="/logo.png" alt="Daily Delta" width={20} height={20} className="h-5 w-5 shrink-0" />
+          <span className="text-lg text-muted-foreground group-data-[collapsible=icon]:hidden">/</span>
+          <span className="text-sm font-semibold leading-none truncate group-data-[collapsible=icon]:hidden">
+            {currentOrg?.name ?? "Daily Delta"}
+          </span>
         </div>
       </SidebarHeader>
 
@@ -84,8 +76,9 @@ function AppSidebar() {
                   <SidebarMenuButton
                     render={<Link href={item.href} />}
                     isActive={pathname === item.href || pathname.startsWith(item.href + "/")}
+                    tooltip={item.label}
                   >
-                    <item.icon className="h-4 w-4" />
+                    <item.icon className="h-4 w-4 shrink-0" />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -99,11 +92,11 @@ function AppSidebar() {
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
-              <DropdownMenuTrigger className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 ring-sidebar-ring outline-hidden data-[slot=sidebar-menu-button]">
-                <Avatar className="h-6 w-6">
-                  <AvatarFallback className="text-xs">{userInitials}</AvatarFallback>
+              <DropdownMenuTrigger className="flex h-8 w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 ring-sidebar-ring outline-hidden">
+                <Avatar className="h-5 w-5 shrink-0">
+                  <AvatarFallback className="text-[10px]">{userInitials}</AvatarFallback>
                 </Avatar>
-                <div className="flex flex-col items-start min-w-0">
+                <div className="flex flex-col items-start min-w-0 group-data-[collapsible=icon]:hidden">
                   <span className="text-xs font-medium truncate max-w-[140px]">
                     {user?.email ?? "Account"}
                   </span>
@@ -142,6 +135,7 @@ function AppSidebar() {
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   const router = useRouter();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -163,13 +157,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <RunsProvider>
-      <SidebarProvider>
-        <AppSidebar />
+      <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <div
+          onMouseEnter={() => setSidebarOpen(true)}
+          onMouseLeave={() => setSidebarOpen(false)}
+        >
+          <AppSidebar />
+        </div>
         <SidebarInset>
-          <header className="flex h-14 items-center gap-2 border-b px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator orientation="vertical" className="h-4" />
-          </header>
           <main className="flex-1 p-4">{children}</main>
         </SidebarInset>
       </SidebarProvider>

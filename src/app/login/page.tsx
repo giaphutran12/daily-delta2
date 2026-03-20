@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import Image from "next/image";
 import { useAuth } from "@/lib/auth/AuthContext";
 
 const loginSchema = z.object({
@@ -52,6 +53,9 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
+        <div className="flex justify-center mb-6">
+          <Image src="/logo.png" alt="Daily Delta" width={48} height={48} />
+        </div>
         <Card>
           <CardHeader className="text-center">
             <CardTitle className="text-2xl">Welcome back</CardTitle>

@@ -1,18 +1,27 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { PT_Serif, Ubuntu } from "next/font/google";
+import localFont from "next/font/local";
 import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Providers } from "./providers";
 import "./globals.css";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const ptSerif = PT_Serif({
+  variable: "--font-pt-serif",
   subsets: ["latin"],
+  weight: ["400", "700"],
+  style: ["normal", "italic"],
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const ubuntu = Ubuntu({
+  variable: "--font-ubuntu",
   subsets: ["latin"],
+  weight: ["400", "500", "700"],
+});
+
+const departureMono = localFont({
+  src: "../../public/fonts/DepartureMono-Regular.woff2",
+  variable: "--font-departure-mono",
 });
 
 export const metadata: Metadata = {
@@ -26,8 +35,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" suppressHydrationWarning className={`${ptSerif.variable} ${ubuntu.variable} ${departureMono.variable}`}>
+      <body className="antialiased">
         <TooltipProvider>
           <Providers>
             {children}

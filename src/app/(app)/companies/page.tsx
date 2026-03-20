@@ -2,14 +2,13 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Play, X, Settings2 } from "lucide-react";
+import { Plus, Trash2, X } from "lucide-react";
 import {
   getCompanies,
   deleteCompany,
   storeCompanySSE,
   getSignalDefinitions,
   createSignalDefinition,
-  deleteSignalDefinition,
   type Company,
 } from "@/lib/api/client";
 import type { SignalDefinition } from "@/lib/types";
@@ -49,6 +48,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { RunProgressRing } from "@/components/RunProgressRing";
+import { ActiveRunModal } from "@/components/ActiveRunModal";
 
 const SKELETON_ROWS = ["row-a", "row-b", "row-c"];
 
@@ -67,9 +67,10 @@ function slugify(text: string): string {
 }
 
 export default function CompaniesPage() {
-  const { currentOrg } = useAuth();
   const router = useRouter();
-  const { activeRuns, handleRunCompany } = useRuns();
+  const { currentOrg } = useAuth();
+  const { activeRuns } = useRuns();
+  const [runModalCompanyId, setRunModalCompanyId] = useState<string | null>(null);
 
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyLimit, setCompanyLimit] = useState(5);
@@ -89,15 +90,6 @@ export default function CompaniesPage() {
     target_url: "",
     search_instructions: "",
   });
-
-  // Edit company signals
-  const [editSignalsCompany, setEditSignalsCompany] = useState<Company | null>(null);
-  const [editSignalsOpen, setEditSignalsOpen] = useState(false);
-  const [companySignals, setCompanySignals] = useState<SignalDefinition[]>([]);
-  const [companySignalsLoading, setCompanySignalsLoading] = useState(false);
-  const [editSignalForm, setEditSignalForm] = useState({ name: "", target_url: "", search_instructions: "" });
-  const [editSignalFormOpen, setEditSignalFormOpen] = useState(false);
-  const [editSignalError, setEditSignalError] = useState("");
 
   const fetchCompanies = useCallback(async () => {
     try {
@@ -186,53 +178,6 @@ export default function CompaniesPage() {
         setAddMsg(`Error: ${err}`);
       },
     );
-  };
-
-  const openEditSignals = async (company: Company) => {
-    setEditSignalsCompany(company);
-    setEditSignalsOpen(true);
-    setCompanySignalsLoading(true);
-    setEditSignalError("");
-    setEditSignalFormOpen(false);
-    try {
-      const sigs = await getSignalDefinitions(company.company_id);
-      setCompanySignals(sigs.filter((s) => s.scope === "company"));
-    } catch {
-      setEditSignalError("Failed to load signals");
-    } finally {
-      setCompanySignalsLoading(false);
-    }
-  };
-
-  const handleCreateCompanySignal = async () => {
-    if (!editSignalsCompany || !editSignalForm.name.trim()) return;
-    setEditSignalError("");
-    try {
-      const created = await createSignalDefinition({
-        name: editSignalForm.name,
-        signal_type: slugify(editSignalForm.name),
-        display_name: editSignalForm.name,
-        target_url: editSignalForm.target_url,
-        search_instructions: editSignalForm.search_instructions,
-        scope: "company",
-        company_id: editSignalsCompany.company_id,
-      });
-      setCompanySignals((prev) => [...prev, created]);
-      setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-      setEditSignalFormOpen(false);
-    } catch {
-      setEditSignalError("Failed to create signal");
-    }
-  };
-
-  const handleDeleteCompanySignal = async (id: string) => {
-    await deleteSignalDefinition(id);
-    setCompanySignals((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const onRunCompany = (company: Company) => {
-    handleRunCompany(company);
-    router.push("/active-runs");
   };
 
   const isRunningOrQueued = (companyId: string) =>
@@ -484,7 +429,7 @@ export default function CompaniesPage() {
                 <TableHead>Domain</TableHead>
                 <TableHead>Industry</TableHead>
                 <TableHead>Last Run</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="w-10"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -495,20 +440,34 @@ export default function CompaniesPage() {
                   (r) => r.companyId === company.company_id && !r.isComplete,
                 );
                 return (
-                  <TableRow key={company.company_id}>
+                  <TableRow
+                    key={company.company_id}
+                    className="cursor-pointer"
+                    onClick={() => router.push(`/companies/${company.company_id}`)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        router.push(`/companies/${company.company_id}`);
+                      }
+                    }}
+                    tabIndex={0}
+                    role="link"
+                  >
                     <TableCell className="font-medium">
                       <div className="flex items-center gap-2">
                         {company.company_name}
                         {activeRun && !queued && activeRun.agents.length > 0 && (
-                          <RunProgressRing run={activeRun} />
+                          <span onClick={(e) => e.stopPropagation()}>
+                            <RunProgressRing run={activeRun} onClick={() => setRunModalCompanyId(company.company_id)} />
+                          </span>
                         )}
                         {activeRun && !queued && activeRun.agents.length === 0 && (
-                          <Badge variant="default" className="text-[10px]">
+                          <Badge variant="default" className="text-[10px] cursor-pointer" onClick={(e) => { e.stopPropagation(); setRunModalCompanyId(company.company_id); }}>
                             Starting
                           </Badge>
                         )}
                         {queued && (
-                          <Badge variant="outline" className="text-[10px]">
+                          <Badge variant="outline" className="text-[10px] cursor-pointer" onClick={(e) => { e.stopPropagation(); setRunModalCompanyId(company.company_id); }}>
                             Queued
                           </Badge>
                         )}
@@ -527,68 +486,43 @@ export default function CompaniesPage() {
                           ).toLocaleDateString()
                         : "Never"}
                     </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          onClick={() => openEditSignals(company)}
-                          title="Edit custom signals"
+                    <TableCell>
+                      <AlertDialog>
+                        <AlertDialogTrigger
+                          render={
+                            <Button size="icon-sm" variant="ghost" onClick={(e) => e.stopPropagation()} />
+                          }
                         >
-                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="sr-only">Edit signals for {company.company_name}</span>
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onRunCompany(company)}
-                          disabled={running}
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          {running
-                            ? queued
-                              ? "Queued"
-                              : "Running"
-                            : "Run Agents"}
-                        </Button>
-
-                        <AlertDialog>
-                          <AlertDialogTrigger
-                            render={
-                              <Button size="icon-sm" variant="ghost" />
-                            }
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="sr-only">
-                              Delete {company.company_name}
-                            </span>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Delete Company
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This will remove{" "}
-                                <strong>{company.company_name}</strong> and
-                                all its reports and signals. This action
-                                cannot be undone.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                variant="destructive"
-                                onClick={() =>
-                                  handleDelete(company.company_id)
-                                }
-                              >
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
+                          <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="sr-only">
+                            Delete {company.company_name}
+                          </span>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              Delete Company
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This will remove{" "}
+                              <strong>{company.company_name}</strong> and
+                              all its reports and signals. This action
+                              cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              variant="destructive"
+                              onClick={() =>
+                                handleDelete(company.company_id)
+                              }
+                            >
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </TableCell>
                   </TableRow>
                 );
@@ -598,140 +532,11 @@ export default function CompaniesPage() {
         </div>
       )}
 
-      {/* Edit Company Signals Dialog */}
-      <Dialog
-        open={editSignalsOpen}
-        onOpenChange={(open) => {
-          setEditSignalsOpen(open);
-          if (!open) {
-            setEditSignalsCompany(null);
-            setCompanySignals([]);
-            setEditSignalFormOpen(false);
-            setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-            setEditSignalError("");
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              Custom Signals — {editSignalsCompany?.company_name}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3 py-2">
-            {editSignalError && (
-              <p className="text-xs text-destructive">{editSignalError}</p>
-            )}
+      <ActiveRunModal
+        companyId={runModalCompanyId}
+        onOpenChange={(open) => { if (!open) setRunModalCompanyId(null); }}
+      />
 
-            {companySignalsLoading ? (
-              <div className="flex flex-col gap-1.5">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                {companySignals.length === 0 && !editSignalFormOpen && (
-                  <p className="text-sm text-muted-foreground py-2">
-                    No custom signals for this company. Add one to track specific topics.
-                  </p>
-                )}
-                {companySignals.map((sig) => (
-                  <div
-                    key={sig.id}
-                    className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium">{sig.display_name}</div>
-                      {sig.target_url && (
-                        <div className="text-xs text-muted-foreground truncate">{sig.target_url}</div>
-                      )}
-                      {sig.search_instructions && (
-                        <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{sig.search_instructions}</div>
-                      )}
-                    </div>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      onClick={() => handleDeleteCompanySignal(sig.id)}
-                    >
-                      <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-
-                <Dialog
-                  open={editSignalFormOpen}
-                  onOpenChange={(open) => {
-                    setEditSignalFormOpen(open);
-                    if (!open) setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-                  }}
-                >
-                  <DialogTrigger render={
-                    <button
-                      className="w-full rounded-md border border-dashed border-muted-foreground/40 py-2 text-sm text-muted-foreground hover:border-muted-foreground/70 hover:text-foreground transition-colors"
-                    />
-                  }>
-                    + Add Signal
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-sm">
-                    <DialogHeader>
-                      <DialogTitle>Add Custom Signal</DialogTitle>
-                    </DialogHeader>
-                    <div className="flex flex-col gap-3 py-2">
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Signal name</Label>
-                        <Input
-                          placeholder="e.g. Blog Scanner"
-                          value={editSignalForm.name}
-                          onChange={(e) => setEditSignalForm((f) => ({ ...f, name: e.target.value }))}
-                          autoFocus
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Target URL</Label>
-                        <Input
-                          placeholder="e.g. {website_url}/blog or https://example.com/blog"
-                          value={editSignalForm.target_url}
-                          onChange={(e) => setEditSignalForm((f) => ({ ...f, target_url: e.target.value }))}
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Search instructions</Label>
-                        <Textarea
-                          placeholder="What to look for..."
-                          value={editSignalForm.search_instructions}
-                          onChange={(e) => setEditSignalForm((f) => ({ ...f, search_instructions: e.target.value }))}
-                          rows={3}
-                          className="resize-none"
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          setEditSignalFormOpen(false);
-                          setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={!editSignalForm.name.trim()}
-                        onClick={handleCreateCompanySignal}
-                      >
-                        Add Signal
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

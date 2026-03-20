@@ -10,9 +10,10 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 interface RunProgressRingProps {
   run: ActiveRun;
+  onClick?: () => void;
 }
 
-export function RunProgressRing({ run }: RunProgressRingProps) {
+export function RunProgressRing({ run, onClick }: RunProgressRingProps) {
   const agents = run.agents.map((a) => ({
     agentId: a.agentId,
     status: a.status,
@@ -21,7 +22,12 @@ export function RunProgressRing({ run }: RunProgressRingProps) {
   const offset = CIRCUMFERENCE - (progress / 100) * CIRCUMFERENCE;
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div
+      className={`flex items-center gap-1.5${onClick ? " cursor-pointer" : ""}`}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+    >
       <svg width={SIZE} height={SIZE} className="-rotate-90">
         <circle
           cx={SIZE / 2}

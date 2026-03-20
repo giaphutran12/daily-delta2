@@ -58,7 +58,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { MailIcon, TrashIcon, EyeIcon, ChevronDownIcon } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { MailIcon, TrashIcon, EyeIcon } from "lucide-react";
 
 function getAllSignalsSorted(
   rd: ReportData,
@@ -501,10 +508,6 @@ export default function ReportsPage() {
                            >
                              <TrashIcon className="h-4 w-4" />
                            </Button>
-                           <ChevronDownIcon
-                             aria-hidden
-                             className={`h-4 w-4 text-muted-foreground transition-transform ${isSelected ? "rotate-180" : ""}`}
-                           />
                          </div>
                          {emailErrorId === report.report_id && (
                            <span className="text-xs text-red-600">
@@ -526,12 +529,35 @@ export default function ReportsPage() {
         </Card>
       )}
 
-      {selectedReport && (
-        <ReportDetailCard
-          report={selectedReport}
-          companyName={getCompanyName(selectedReport.company_id)}
-        />
-      )}
+      <Sheet
+        open={!!selectedReportId}
+        onOpenChange={(open) => {
+          if (!open) setSelectedReportId(null);
+        }}
+      >
+        <SheetContent side="right" className="sm:max-w-[70vw] overflow-y-auto">
+          {selectedReport && (
+            <>
+              <SheetHeader>
+                <SheetTitle>
+                  {getCompanyName(selectedReport.company_id)} — {formatDate(selectedReport.generated_at)}
+                </SheetTitle>
+                <SheetDescription>
+                  <Badge variant="outline">
+                    {selectedReport.trigger === "cron" ? "Scheduled" : "Manual"}
+                  </Badge>
+                </SheetDescription>
+              </SheetHeader>
+              <div className="px-4 pb-4">
+                <ReportDetailCard
+                  report={selectedReport}
+                  companyName={getCompanyName(selectedReport.company_id)}
+                />
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
 
       <AlertDialog
         open={!!deleteDialogId}

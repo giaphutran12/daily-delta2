@@ -100,6 +100,16 @@ function extractSignalsFromSnapshot(raw: unknown): SignalFinding[] {
     .filter((finding): finding is SignalFinding => !!finding);
 }
 
+function sanitizeTimestamp(value: string | undefined): string {
+  if (!value) return new Date().toISOString();
+  const parsed = new Date(value);
+  if (isNaN(parsed.getTime())) {
+    console.warn("[PIPELINE] Invalid detected_at value %j, using now()", value);
+    return new Date().toISOString();
+  }
+  return parsed.toISOString();
+}
+
 async function storeSignals(
   companyId: string,
   findings: SignalFinding[],
@@ -115,7 +125,7 @@ async function storeSignals(
     title: finding.title,
     content: finding.summary,
     url: finding.url || null,
-    detected_at: finding.detected_at || new Date().toISOString(),
+    detected_at: sanitizeTimestamp(finding.detected_at),
   }));
 
   const { error } = await supabase.from("signals").insert(rows);

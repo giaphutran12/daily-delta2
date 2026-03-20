@@ -1,0 +1,4 @@
+curl -X POST http://localhost:3001/api/trigger-pipeline \
+    -H "Authorization: Bearer any-secret-string" \
+    -H "Content-Type: application/json" \
+    -d '{"organization_id": "d71281a6-6d02-495a-8aad-580e48460d9a"}'
