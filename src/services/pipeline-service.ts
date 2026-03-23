@@ -8,7 +8,7 @@ import {
   getTrackingOrgs,
   updateLastAgentRun,
 } from "@/services/company-service";
-import { sendReportEmail } from "@/services/email-service";
+import { sendDigestEmail } from "@/services/email-service";
 import { runIntelligenceAgentsSilent } from "@/services/orchestrator";
 import {
   generateReportFromFindings,
@@ -34,12 +34,11 @@ function sanitizeTimestamp(value: string | undefined): string | null {
 
 /**
  * Deduplicate findings against existing signals in the database.
- * One SQL query per finding — no bulk loading.
  *
- * - Has date: check title (case-insensitive) + date match
- * - No date: check title (case-insensitive) + detected_at IS NULL
+ * Layer 1: Exact title match (case-insensitive, trimmed). Same title = duplicate.
+ * Layer 2: Deep URL match (3+ path segments). Same URL on a specific page = duplicate.
  *
- * Also deduplicates within the current batch.
+ * One SQL query per check. Also deduplicates within the current batch.
  */
 async function deduplicateFindings(
   companyId: string,
@@ -49,59 +48,50 @@ async function deduplicateFindings(
 
   const supabase = createAdminClient();
   const newFindings: SignalFinding[] = [];
-
-  // Track what we've already accepted this batch (title|date or title|null)
-  const batchKeys = new Set<string>();
+  const batchTitles = new Set<string>();
 
   for (const finding of findings) {
-    const title = (finding.title ?? "").trim();
-    const titleLower = title.toLowerCase();
-    const date = sanitizeTimestamp(finding.detected_at);
-    const dateDay = date ? new Date(date).toISOString().slice(0, 10) : null;
-    const batchKey = `${titleLower}|${dateDay ?? "null"}`;
+    const titleLower = (finding.title ?? "").trim().toLowerCase();
 
-    // Check within current batch first
-    if (batchKeys.has(batchKey)) {
+    // Layer 1a: Check within current batch
+    if (batchTitles.has(titleLower)) {
       console.log(
-        "[DEDUP] DUPLICATE — title: \"%s\" | date: %s | reason: duplicate within same batch",
-        finding.title, dateDay ?? "(no date)",
+        "[DEDUP] DUPLICATE — title: \"%s\" | reason: duplicate within same batch",
+        finding.title,
       );
       continue;
     }
 
-    // Check against database
-    let query = supabase
+    // Layer 1b: Check title against database
+    const { count, error } = await supabase
       .from("signals")
       .select("signal_id", { count: "exact", head: true })
       .eq("company_id", companyId)
       .ilike("title", titleLower);
 
-    if (dateDay) {
-      // Has a real date — match title + same day
-      query = query.gte("detected_at", `${dateDay}T00:00:00.000Z`)
-                   .lt("detected_at", `${dateDay}T23:59:59.999Z`);
-    } else {
-      // No date — match title + detected_at is null
-      query = query.is("detected_at", null);
-    }
-
-    const { count, error } = await query;
-
     if (error) {
       console.warn("[DEDUP] Query failed for \"%s\", keeping signal: %s", finding.title, error.message);
       newFindings.push(finding);
-      batchKeys.add(batchKey);
+      batchTitles.add(titleLower);
       continue;
     }
 
     if ((count ?? 0) > 0) {
       console.log(
-        "[DEDUP] DUPLICATE — title: \"%s\" | date: %s | reason: exists in DB",
-        finding.title, dateDay ?? "(no date)",
+        "[DEDUP] DUPLICATE — title: \"%s\" | reason: exact title match in DB",
+        finding.title,
       );
-    } else {
-      // Check if same URL already exists
-      if (finding.url) {
+      continue;
+    }
+
+    // Layer 2: Deep URL match
+    if (finding.url) {
+      let pathDepth = 0;
+      try {
+        pathDepth = new URL(finding.url).pathname.split("/").filter(Boolean).length;
+      } catch {}
+
+      if (pathDepth >= 3) {
         const { count: urlCount } = await supabase
           .from("signals")
           .select("signal_id", { count: "exact", head: true })
@@ -109,36 +99,21 @@ async function deduplicateFindings(
           .eq("url", finding.url);
 
         if ((urlCount ?? 0) > 0) {
-          // Count path segments to decide if this is a deep/specific URL
-          let pathDepth = 0;
-          try {
-            pathDepth = new URL(finding.url).pathname.split("/").filter(Boolean).length;
-          } catch {}
-
-          if (pathDepth >= 3) {
-            // Deep URL (e.g. /blog/2026/billing-v3) — specific enough to dedup
-            console.log(
-              "[DEDUP] DUPLICATE — title: \"%s\" | url: %s | reason: deep URL match (depth %d)",
-              finding.title, finding.url, pathDepth,
-            );
-            continue;
-          } else {
-            // Shallow URL (e.g. /careers, /blog) — too generic, just log it
-            console.log(
-              "[DEDUP] URL MATCH (not deduped, shallow path depth %d) — title: \"%s\" | url: %s",
-              pathDepth, finding.title, finding.url,
-            );
-          }
+          console.log(
+            "[DEDUP] DUPLICATE — title: \"%s\" | url: %s | reason: deep URL match (depth %d)",
+            finding.title, finding.url, pathDepth,
+          );
+          continue;
         }
       }
-
-      console.log(
-        "[DEDUP] NEW — title: \"%s\" | date: %s | signal_type: %s",
-        finding.title, dateDay ?? "(no date)", finding.signal_type,
-      );
-      newFindings.push(finding);
-      batchKeys.add(batchKey);
     }
+
+    console.log(
+      "[DEDUP] NEW — title: \"%s\" | signal_type: %s",
+      finding.title, finding.signal_type,
+    );
+    newFindings.push(finding);
+    batchTitles.add(titleLower);
   }
 
   return newFindings;
@@ -167,6 +142,7 @@ async function llmDedup(
 
   // Fetch existing signals per type (one query per type, cached)
   const existingByType = new Map<string, Array<{ title: string; content: string; source: string }>>();
+  const urlCache = new Map<string, Array<{ title: string; content: string; source: string }>>();
   for (const signalType of byType.keys()) {
     const { data } = await supabase
       .from("signals")
@@ -181,13 +157,40 @@ async function llmDedup(
   // Run LLM checks in parallel
   const results = await Promise.all(
     findings.map(async (finding): Promise<{ finding: SignalFinding; keep: boolean }> => {
-      const existing = existingByType.get(finding.signal_type) ?? [];
+      const existingBySignalType = existingByType.get(finding.signal_type) ?? [];
+
+      // Also fetch signals with the same source URL (if finding has one)
+      let existingByUrl: Array<{ title: string; content: string; source: string }> = [];
+      if (finding.url) {
+        if (!urlCache.has(finding.url)) {
+          const { data } = await supabase
+            .from("signals")
+            .select("title, content, source")
+            .eq("company_id", companyId)
+            .eq("url", finding.url)
+            .order("created_at", { ascending: false })
+            .limit(10);
+          urlCache.set(finding.url, data ?? []);
+        }
+        existingByUrl = urlCache.get(finding.url)!;
+      }
+
+      // Merge and deduplicate the comparison set
+      const seen = new Set<string>();
+      const existing: Array<{ title: string; content: string; source: string }> = [];
+      for (const s of [...existingBySignalType, ...existingByUrl]) {
+        const key = s.title.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          existing.push(s);
+        }
+      }
 
       // Nothing to compare against — keep it
       if (existing.length === 0) {
         console.log(
-          "[DEDUP-LLM] SKIP (no existing signals of type %s) — title: \"%s\"",
-          finding.signal_type, finding.title,
+          "[DEDUP-LLM] SKIP (no existing signals to compare) — title: \"%s\"",
+          finding.title,
         );
         return { finding, keep: true };
       }
@@ -197,7 +200,13 @@ async function llmDedup(
         .map((s, i) => `${i + 1}. "${s.title}" — ${s.content?.slice(0, 100) ?? ""} (source: ${s.source})`)
         .join("\n");
 
-      const prompt = `You are a deduplication checker. Determine if the NEW signal below is a duplicate of any EXISTING signal. Two signals are duplicates if they describe the same event, announcement, or fact — even if worded differently.
+      const prompt = `You are a deduplication checker. Determine if the NEW signal is a duplicate of any EXISTING signal.
+
+Two signals are DUPLICATES if they:
+- Describe the same event, announcement, or fact — even if worded differently
+- Profile the same company as a competitor — even with different titles or descriptions
+- Cover the same person (e.g. same founder/CEO listed twice with different formatting)
+- Report the same data point (e.g. same funding round, same metric, same product)
 
 EXISTING SIGNALS for this company (${finding.signal_type}):
 ${existingList}
@@ -331,46 +340,39 @@ export async function processCompany(
     console.log("%s After LLM dedup: %d signals (filtered %d more)", tag, finalFindings.length, newFindings.length - finalFindings.length);
 
     // 5. Store final findings in DB
-    await storeSignals(company.company_id, finalFindings);
-    await updateLastAgentRun(company.company_id);
-    console.log("%s Stored %d signals", tag, finalFindings.length);
+    if (finalFindings.length > 0) {
+      await storeSignals(company.company_id, finalFindings);
+      console.log("%s Stored %d signals", tag, finalFindings.length);
 
-    // 6. Generate & store report from new findings
-    const reportData = generateReportFromFindings(company, finalFindings, definitions);
-    const report = await storeReport(company.company_id, reportData, "cron");
-    console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
+      // 6. Generate & store report
+      const reportData = generateReportFromFindings(company, finalFindings, definitions);
+      const report = await storeReport(company.company_id, reportData, "cron");
+      console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
 
-    // 7. Email to all orgs tracking this company
-    const trackingOrgIds = await getTrackingOrgs(company.company_id);
-    let totalEmailsSent = 0;
+      await updateLastAgentRun(company.company_id);
 
-    for (const orgId of trackingOrgIds) {
-      const emails = await getOrgRecipientEmails(orgId);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log("%s Done in %ss — %d new signals", tag, elapsed, finalFindings.length);
 
-      for (const email of emails) {
-        const sent = await sendReportEmail(email, company, reportData);
-        if (sent) {
-          console.log("%s Email sent to %s (org %s)", tag, email, orgId);
-          totalEmailsSent += 1;
-        }
-      }
+      return {
+        companyId: company.company_id,
+        companyName: company.company_name,
+        signalCount: finalFindings.length,
+        reportId: report.report_id,
+        findings: finalFindings,
+      };
     }
 
+    // Nothing new
+    await updateLastAgentRun(company.company_id);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(
-      "%s Done in %ss — %d findings, %d emails sent",
-      tag,
-      elapsed,
-      findings.length,
-      totalEmailsSent,
-    );
+    console.log("%s Done in %ss — no new signals", tag, elapsed);
 
     return {
       companyId: company.company_id,
       companyName: company.company_name,
-      signalCount: findings.length,
-      reportId: report.report_id,
-      emailsSent: totalEmailsSent,
+      signalCount: 0,
+      findings: [],
     };
   } catch (error) {
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -384,27 +386,31 @@ export async function processCompany(
       companyId: company.company_id,
       companyName: company.company_name,
       signalCount: 0,
-      emailsSent: 0,
       error: error instanceof Error ? error.message : String(error),
+      findings: [],
     };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Run full pipeline (all tracked companies)
+// Run full pipeline (all tracked companies) + send digest emails
 // ---------------------------------------------------------------------------
 
 export async function runPipeline(
-  singleCompanyId?: string,
+  companyIds?: string[],
 ): Promise<PipelineResult> {
   const pipelineStart = Date.now();
 
+  // Build a map of company_id → Company for the digest
+  const companyMap = new Map<string, Company>();
+
   let companies: Company[];
 
-  if (singleCompanyId) {
-    const company = await getCompanyById(singleCompanyId);
-    if (!company) throw new Error(`Company ${singleCompanyId} not found`);
-    companies = [company];
+  if (companyIds && companyIds.length > 0) {
+    // Fetch specific companies
+    const fetched = await Promise.all(companyIds.map((id) => getCompanyById(id)));
+    companies = fetched.filter((c): c is Company => c !== null);
+    if (companies.length === 0) throw new Error("None of the specified companies were found");
   } else {
     companies = await getTrackedActiveCompanies();
   }
@@ -414,8 +420,11 @@ export async function runPipeline(
     return { companiesProcessed: 0, results: [], elapsed_seconds: 0 };
   }
 
+  for (const c of companies) companyMap.set(c.company_id, c);
+
   console.log("[PIPELINE] Processing %d companies", companies.length);
 
+  // Process all companies
   const results: CompanyPipelineResult[] = [];
   const BATCH_SIZE = 5;
 
@@ -425,6 +434,51 @@ export async function runPipeline(
       batch.map((company) => processCompany(company)),
     );
     results.push(...batchResults);
+  }
+
+  // Collect companies that had new signals
+  const companiesWithUpdates = results.filter((r) => r.signalCount > 0 && !r.error);
+
+  if (companiesWithUpdates.length === 0) {
+    console.log("[PIPELINE] No new signals across any company — skipping email");
+  } else {
+    console.log(
+      "[PIPELINE] %d companies had new signals — sending digest emails",
+      companiesWithUpdates.length,
+    );
+
+    // Gather all org IDs that track any of the updated companies
+    const orgCompanyMap = new Map<string, CompanyPipelineResult[]>();
+
+    for (const result of companiesWithUpdates) {
+      const orgIds = await getTrackingOrgs(result.companyId);
+      for (const orgId of orgIds) {
+        if (!orgCompanyMap.has(orgId)) orgCompanyMap.set(orgId, []);
+        orgCompanyMap.get(orgId)!.push(result);
+      }
+    }
+
+    // Send one digest email per org
+    for (const [orgId, orgResults] of orgCompanyMap) {
+      const emails = await getOrgRecipientEmails(orgId);
+      if (emails.length === 0) continue;
+
+      // Build digest data: company + findings pairs
+      const digestCompanies = orgResults.map((r) => ({
+        company: companyMap.get(r.companyId)!,
+        findings: r.findings,
+      }));
+
+      for (const email of emails) {
+        const sent = await sendDigestEmail(email, digestCompanies);
+        if (sent) {
+          console.log(
+            "[PIPELINE] Digest email sent to %s (org %s, %d companies)",
+            email, orgId, digestCompanies.length,
+          );
+        }
+      }
+    }
   }
 
   const elapsed = (Date.now() - pipelineStart) / 1000;

@@ -40,23 +40,13 @@ export function startTinyfishAgent(
   const timeout = setTimeout(() => {
     controller.abort();
     if (!completedNormally) {
-      const signals: Array<{
-        signal_type: string;
-        title: string;
-        summary: string;
-        source: string;
-      }> = [];
-
       if (collectedSteps.length > 0) {
-        signals.push({
-          signal_type: "partial_collection",
-          title: "Partial data collected (timed out after 10 min)",
-          summary: collectedSteps.slice(-10).join(" | "),
-          source: "agent_timeout",
-        });
+        console.warn(
+          "[TinyFish] Agent timed out after 10 min. Last steps:",
+          collectedSteps.slice(-10).join(" | "),
+        );
       }
-
-      callbacks.onComplete({ signals });
+      callbacks.onComplete({ signals: [] });
     }
   }, AGENT_TIMEOUT_MS);
 

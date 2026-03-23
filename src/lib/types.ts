@@ -258,6 +258,11 @@ export interface CompanyPipelineResult {
   companyName: string;
   signalCount: number;
   reportId?: string;
-  emailsSent: number;
   error?: string;
+  findings: SignalFinding[];
+}
+
+export interface DigestCompany {
+  company: Company;
+  findings: SignalFinding[];
 }

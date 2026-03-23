@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
-import { withAuth, type AuthContext } from "@/app/api/_lib/with-auth";
+import { withOrg, type OrgAuthContext } from "@/app/api/_lib/with-auth";
 import { SignalDefinitionUpdateSchema } from "@/lib/utils/validation";
+import { isTracking } from "@/services/company-service";
 import {
   getSignalDefinitionById,
   updateSignalDefinition,
@@ -16,8 +17,8 @@ function extractId(req: NextRequest): string {
  * PUT /api/signal-definitions/[id]
  * Update a custom signal definition. Rejects updates to platform defaults.
  */
-export const PUT = withAuth(
-  async (req: NextRequest, _ctx: AuthContext) => {
+export const PUT = withOrg(
+  async (req: NextRequest, ctx: OrgAuthContext) => {
     const id = extractId(req);
 
     const existing = await getSignalDefinitionById(id);
@@ -30,6 +31,13 @@ export const PUT = withAuth(
         { error: "Cannot modify platform default signals" },
         { status: 403 },
       );
+    }
+
+    if (existing.company_id) {
+      const tracking = await isTracking(ctx.organizationId, existing.company_id);
+      if (!tracking) {
+        return Response.json({ error: "Signal definition not found" }, { status: 404 });
+      }
     }
 
     const body = await req.json();
@@ -51,8 +59,8 @@ export const PUT = withAuth(
  * DELETE /api/signal-definitions/[id]
  * Delete a custom signal definition. Rejects deletion of platform defaults.
  */
-export const DELETE = withAuth(
-  async (req: NextRequest, _ctx: AuthContext) => {
+export const DELETE = withOrg(
+  async (req: NextRequest, ctx: OrgAuthContext) => {
     const id = extractId(req);
 
     const existing = await getSignalDefinitionById(id);
@@ -65,6 +73,13 @@ export const DELETE = withAuth(
         { error: "Cannot delete platform default signals" },
         { status: 403 },
       );
+    }
+
+    if (existing.company_id) {
+      const tracking = await isTracking(ctx.organizationId, existing.company_id);
+      if (!tracking) {
+        return Response.json({ error: "Signal definition not found" }, { status: 404 });
+      }
     }
 
     await deleteSignalDefinition(id);

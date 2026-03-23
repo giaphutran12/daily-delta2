@@ -11,17 +11,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let body: { company_id?: string } = {};
+  let body: { company_id?: string; company_ids?: string[] } = {};
   try {
     body = await request.json();
   } catch {
     // empty body is fine — process all companies
   }
 
-  console.log("[PIPELINE] Trigger received, company_id:", body.company_id ?? "(all companies)");
+  const ids = body.company_ids ?? (body.company_id ? [body.company_id] : undefined);
+  console.log("[PIPELINE] Trigger received, companies:", ids ? ids.length + " specified" : "(all)");
 
   try {
-    const result = await runPipeline(body.company_id);
+    const result = await runPipeline(ids);
 
     return NextResponse.json({
       status: result.companiesProcessed > 0 ? "completed" : "no-op",

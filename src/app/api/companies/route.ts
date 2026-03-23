@@ -88,7 +88,7 @@ async function runDiscoveryInBackground(
 ): Promise<void> {
   try {
     await setCompanyPlatformStatus(companyId, "enriching");
-    await sendEvent({ type: "discovery_started", data: { companyId } });
+    try { await sendEvent({ type: "discovery_started", data: { companyId } }); } catch {}
 
     console.log(`[Discovery] Starting background enrichment for ${websiteUrl}`);
     const result = await runDiscoveryAgent(websiteUrl);
@@ -108,9 +108,14 @@ async function runDiscoveryInBackground(
       await setCompanyPlatformStatus(companyId, "active");
     }
 
-    await sendEvent({ type: "discovery_complete", data: { companyId, enriched } });
+    try { await sendEvent({ type: "discovery_complete", data: { companyId, enriched } }); } catch {}
   } catch (err) {
-    console.error("[Discovery] Background enrichment failed:", err);
-    await setCompanyPlatformStatus(companyId, "active");
+    // Only log if it's a real error, not a stream close
+    if (err instanceof Error && err.message.includes("ResponseAborted")) {
+      console.log(`[Discovery] Stream closed by client (enrichment still completed for ${companyId})`);
+    } else {
+      console.error("[Discovery] Background enrichment failed:", err);
+    }
+    try { await setCompanyPlatformStatus(companyId, "active"); } catch {}
   }
 }
