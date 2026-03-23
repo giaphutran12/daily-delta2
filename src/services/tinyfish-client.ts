@@ -1,4 +1,5 @@
-const TINYFISH_API_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
+const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
+const TINYFISH_SYNC_URL = "https://agent.tinyfish.ai/v1/automation/run";
 const AGENT_TIMEOUT_MS = 10 * 60 * 1000;
 const RETRY_DELAY_MS = 10_000;
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
@@ -68,7 +69,7 @@ export function startTinyfishAgent(
     while (attempt < maxAttempts) {
       attempt += 1;
       try {
-        const response = await fetch(TINYFISH_API_URL, {
+        const response = await fetch(TINYFISH_SSE_URL, {
           method: "POST",
           headers: {
             "X-API-Key": apiKey,
@@ -178,32 +179,45 @@ export function startTinyfishAgent(
   return controller;
 }
 
-export async function runParallelAgents(
-  agents: Array<{
-    id: string;
-    config: TinyfishRequest;
-    callbacks: TinyfishCallbacks;
-  }>,
-): Promise<void> {
-  const promises = agents.map(
-    (agent) =>
-      new Promise<void>((resolve) => {
-        const originalOnComplete = agent.callbacks.onComplete;
-        const originalOnError = agent.callbacks.onError;
-
-        agent.callbacks.onComplete = (result) => {
-          originalOnComplete(result);
-          resolve();
-        };
-
-        agent.callbacks.onError = (error) => {
-          originalOnError(error);
-          resolve();
-        };
-
-        startTinyfishAgent(agent.config, agent.callbacks);
-      }),
-  );
-
-  await Promise.allSettled(promises);
+export interface TinyfishSyncResponse {
+  run_id: string;
+  status: "COMPLETED" | "FAILED";
+  result: unknown;
+  error: { code: string; message: string; category: string } | null;
 }
+
+export async function runTinyfishAgentSync(
+  config: TinyfishRequest,
+): Promise<TinyfishSyncResponse> {
+  const apiKey = process.env.TINYFISH_API_KEY;
+  if (!apiKey) throw new Error("TINYFISH_API_KEY not configured");
+
+  let attempt = 0;
+  const maxAttempts = 2;
+
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    const response = await fetch(TINYFISH_SYNC_URL, {
+      method: "POST",
+      headers: {
+        "X-API-Key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ url: config.url, goal: config.goal }),
+      signal: AbortSignal.timeout(AGENT_TIMEOUT_MS),
+    });
+
+    if (!response.ok) {
+      if (RETRYABLE_STATUS_CODES.has(response.status) && attempt < maxAttempts) {
+        await sleep(RETRY_DELAY_MS);
+        continue;
+      }
+      throw new Error(`TinyFish API error: ${response.status} ${response.statusText}`);
+    }
+
+    return (await response.json()) as TinyfishSyncResponse;
+  }
+
+  throw new Error("TinyFish API: max retries exceeded");
+}
+

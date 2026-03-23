@@ -1,5 +1,5 @@
 import { Resend } from "resend";
-import { ReportData, Company, normalizeReportData } from "@/lib/types";
+import { ReportData, Company } from "@/lib/types";
 
 function csvEscape(value: string): string {
   let safe = value;
@@ -13,7 +13,7 @@ function csvEscape(value: string): string {
 }
 
 function buildReportCSV(rawReport: ReportData): string {
-  const report = normalizeReportData(rawReport);
+  const report = rawReport;
   const rows: string[] = [];
 
   rows.push("Section,Title,Summary,Source,URL,Detected At");
@@ -136,7 +136,7 @@ export function buildReportEmail(
   company: Company,
   rawReport: ReportData,
 ): string {
-  const report = normalizeReportData(rawReport);
+  const report = rawReport;
   const mono = "'Courier New',Courier,monospace";
   const serif = "Georgia,'Times New Roman',serif";
 

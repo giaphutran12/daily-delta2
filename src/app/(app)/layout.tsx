@@ -35,7 +35,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/auth/AuthContext";
-import { RunsProvider } from "@/lib/context/RunsContext";
 
 const NAV_ITEMS = [
   { href: "/companies", label: "Companies", icon: Building2 },
@@ -156,18 +155,16 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <RunsProvider>
-      <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
-        <div
-          onMouseEnter={() => setSidebarOpen(true)}
-          onMouseLeave={() => setSidebarOpen(false)}
-        >
-          <AppSidebar />
-        </div>
-        <SidebarInset>
-          <main className="flex-1 p-4">{children}</main>
-        </SidebarInset>
-      </SidebarProvider>
-    </RunsProvider>
+    <SidebarProvider open={sidebarOpen} onOpenChange={setSidebarOpen}>
+      <div
+        onMouseEnter={() => setSidebarOpen(true)}
+        onMouseLeave={() => setSidebarOpen(false)}
+      >
+        <AppSidebar />
+      </div>
+      <SidebarInset>
+        <main className="flex-1 p-4">{children}</main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

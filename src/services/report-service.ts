@@ -5,10 +5,8 @@ import {
   ReportSignal,
   ReportSection,
   Company,
-  Signal,
   SignalFinding,
   SignalDefinition,
-  normalizeReportData,
 } from "@/lib/types";
 
 /** Sort signals by detected_at descending (latest first) */
@@ -97,35 +95,6 @@ function buildSections(
 }
 
 /**
- * Generate a structured intelligence report from signals
- */
-export function generateReport(
-  company: Company,
-  signals: Signal[],
-  definitions?: SignalDefinition[],
-): ReportData {
-  const displayNames = buildDisplayNameMap(definitions);
-  const signalTypes = definitions
-    ? definitions.map((d) => d.signal_type)
-    : Object.keys(DEFAULT_DISPLAY_NAMES);
-
-  const reportSignals = signals.map((s) => ({
-    signal_type: s.signal_type,
-    title: s.title,
-    summary: s.content,
-    source: s.source,
-    url: s.url || undefined,
-    detected_at: s.detected_at,
-  }));
-
-  return {
-    company_overview:
-      company.description || `Intelligence report for ${company.company_name}`,
-    sections: buildSections(reportSignals, signalTypes, displayNames),
-  };
-}
-
-/**
  * Generate a structured intelligence report directly from agent findings
  */
 export function generateReportFromFindings(
@@ -155,14 +124,12 @@ export function generateReportFromFindings(
 }
 
 /**
- * Store report in database (org-scoped)
+ * Store report in database (platform-level, per company)
  */
 export async function storeReport(
   companyId: string,
   reportData: ReportData,
-  userId: string,
-  trigger: "manual" | "cron" = "manual",
-  organizationId?: string,
+  trigger: "manual" | "cron" = "cron",
 ): Promise<Report> {
   const supabase = createAdminClient();
 
@@ -170,8 +137,6 @@ export async function storeReport(
     .from("reports")
     .insert({
       company_id: companyId,
-      user_id: userId,
-      organization_id: organizationId ?? null,
       generated_at: new Date().toISOString(),
       report_data: reportData,
       trigger,
@@ -233,7 +198,8 @@ export async function deleteReport(reportId: string): Promise<void> {
 }
 
 /**
- * Get all reports for an organization (with company info).
+ * Get all reports for companies tracked by an organization.
+ * Uses the organization_tracked_companies junction table.
  */
 export async function getAllReports(
   organizationId: string,
@@ -241,11 +207,21 @@ export async function getAllReports(
   const supabase = createAdminClient();
 
   try {
-    // Fetch reports for this org
+    // Get company IDs tracked by this org
+    const { data: tracked } = await supabase
+      .from("organization_tracked_companies")
+      .select("company_id")
+      .eq("organization_id", organizationId);
+
+    if (!tracked || tracked.length === 0) return [];
+
+    const companyIds = tracked.map((t) => t.company_id);
+
+    // Fetch reports for those companies
     const { data: reportRows, error } = await supabase
       .from("reports")
       .select("*, companies(company_name, website_url)")
-      .eq("organization_id", organizationId)
+      .in("company_id", companyIds)
       .order("generated_at", { ascending: false })
       .limit(50);
 
@@ -256,10 +232,9 @@ export async function getAllReports(
         ({
           report_id: r.report_id as string,
           company_id: r.company_id as string,
-          organization_id: r.organization_id as string | null,
           generated_at: r.generated_at as string,
-          report_data: normalizeReportData(r.report_data as ReportData),
-          trigger: (r.trigger as "manual" | "cron") || "manual",
+          report_data: r.report_data as ReportData,
+          trigger: (r.trigger as "manual" | "cron") || "cron",
           companies: r.companies as
             | { company_name: string; website_url: string }
             | undefined,
@@ -275,9 +250,8 @@ function rowToReport(row: any): Report {
   return {
     report_id: row.report_id,
     company_id: row.company_id,
-    organization_id: row.organization_id,
     generated_at: row.generated_at ?? new Date().toISOString(),
-    report_data: normalizeReportData(row.report_data as ReportData),
-    trigger: (row.trigger as "manual" | "cron") || "manual",
+    report_data: row.report_data as ReportData,
+    trigger: (row.trigger as "manual" | "cron") || "cron",
   };
 }

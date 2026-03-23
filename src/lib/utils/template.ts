@@ -64,6 +64,6 @@ Return JSON:
   ]
 }
 
-IMPORTANT: For detected_at, use the actual date found. Do NOT use today's date. If no date is visible, omit the field.
+IMPORTANT: For detected_at, use the actual date this information came up or event happneed. Do NOT use today's date. If no date is visible, omit the field.
 Only include genuinely meaningful findings. Be factual.`;
 }

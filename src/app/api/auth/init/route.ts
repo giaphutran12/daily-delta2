@@ -4,7 +4,6 @@ import { ensureUser } from "@/services/user-service";
 import {
   createOrganization,
   getOrganizationsForUser,
-  seedDefaultDefinitions,
 } from "@/services/organization-service";
 
 export const POST = withAuth(async (_req: NextRequest, ctx: AuthContext) => {
@@ -18,9 +17,6 @@ export const POST = withAuth(async (_req: NextRequest, ctx: AuthContext) => {
           ? `${ctx.userEmail.split("@")[0]}'s Workspace`
           : "My Workspace";
         const newOrg = await createOrganization(orgName, ctx.userId);
-        await seedDefaultDefinitions(newOrg.organization_id).catch((err) =>
-          console.error("[AUTH] Failed to seed signal definitions:", err),
-        );
         orgs = [{ ...newOrg, role: "owner" }];
       } catch {
         orgs = await getOrganizationsForUser(ctx.userId);

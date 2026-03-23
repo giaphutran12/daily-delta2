@@ -9,7 +9,6 @@ import {
   previewReportEmail,
 } from "@/lib/api/client";
 import {
-  normalizeReportData,
   type Report,
   type Company,
   type ReportData,
@@ -70,7 +69,7 @@ import { MailIcon, TrashIcon, EyeIcon } from "lucide-react";
 function getAllSignalsSorted(
   rd: ReportData,
 ): Array<ReportSignal & { category: string }> {
-  const normalized = normalizeReportData(rd);
+  const normalized = (rd);
   const all: Array<ReportSignal & { category: string }> = [];
   for (const section of normalized.sections) {
     for (const item of section.items) {
@@ -154,7 +153,7 @@ function ReportDetailCard({
   report: Report;
   companyName: string;
 }) {
-  const rd = normalizeReportData(report.report_data);
+  const rd = (report.report_data);
   const hasAi = !!rd.ai_summary;
   const aiLabel =
     rd.ai_summary_type === "business_intelligence"
@@ -424,7 +423,7 @@ export default function ReportsPage() {
             </TableHeader>
             <TableBody>
               {filteredReports.map((report) => {
-                const rd = normalizeReportData(report.report_data);
+                const rd = (report.report_data);
                 const totalSignals = rd.sections.reduce(
                   (s, sec) => s + sec.items.length,
                   0,

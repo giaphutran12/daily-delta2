@@ -2,9 +2,8 @@
   "framework": "nextjs",
   "regions": ["iad1"],
   "functions": {
-    "src/app/api/run-agents/route.ts": { "maxDuration": 800 },
     "src/app/api/companies/route.ts": { "maxDuration": 800 },
-    "src/app/api/inngest/route.ts": { "maxDuration": 800 },
-    "src/app/api/trigger-pipeline/route.ts": { "maxDuration": 800 }
+    "src/app/api/trigger-pipeline/route.ts": { "maxDuration": 800 },
+    "src/app/api/chat/[companyId]/route.ts": { "maxDuration": 60 }
   }
 }

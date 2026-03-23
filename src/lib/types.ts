@@ -14,7 +14,7 @@ export interface Organization {
   organization_id: string;
   name: string;
   slug: string;
-  company_limit: number;
+  tracking_limit: number;
   created_at: string;
 }
 
@@ -32,8 +32,7 @@ export interface OrganizationMember {
 
 export interface Company {
   company_id: string;
-  user_id: string;
-  organization_id: string | null;
+  added_by: string | null;
   company_name: string;
   website_url: string;
   domain: string;
@@ -49,6 +48,12 @@ export interface Company {
   created_at: string;
   last_agent_run: string | null;
   tracking_status: 'active' | 'paused' | 'archived';
+  platform_status: 'active' | 'pending_discovery' | 'enriching' | 'archived';
+}
+
+export interface TrackedCompany extends Company {
+  tracked_at: string;
+  tracked_by: string | null;
 }
 
 export type SignalType = string;
@@ -61,13 +66,13 @@ export interface Signal {
   title: string;
   content: string;
   url: string | null;
-  detected_at: string;
+  detected_at: string | null;
+  created_at: string;
 }
 
 export interface Report {
   report_id: string;
   company_id: string;
-  organization_id?: string | null;
   generated_at: string;
   report_data: ReportData;
   trigger?: 'manual' | 'cron';
@@ -84,60 +89,6 @@ export interface ReportData {
   sections: ReportSection[];
   ai_summary?: string;
   ai_summary_type?: 'summary' | 'business_intelligence';
-  // Legacy fields for backward compat with old stored reports
-  product_launches?: ReportSignal[];
-  financings?: ReportSignal[];
-  leadership_changes?: ReportSignal[];
-  revenue_milestones?: ReportSignal[];
-  customer_wins?: ReportSignal[];
-  pricing_updates?: ReportSignal[];
-  hiring_trends?: ReportSignal[];
-  general_news?: ReportSignal[];
-  founder_contacts?: ReportSignal[];
-  leading_indicators?: ReportSignal[];
-  competitive_landscape?: ReportSignal[];
-  fundraising_signals?: ReportSignal[];
-}
-
-/**
- * Normalize old 12-property format reports into sections[] format
- */
-export function normalizeReportData(raw: ReportData): ReportData {
-  if (raw.sections && raw.sections.length > 0) return raw;
-
-  const LEGACY_MAP: Array<{ key: string; signal_type: string; display_name: string }> = [
-    { key: 'product_launches', signal_type: 'product_launch', display_name: 'Product Launches' },
-    { key: 'financings', signal_type: 'financing', display_name: 'Financings' },
-    { key: 'leadership_changes', signal_type: 'leadership_change', display_name: 'Leadership Changes' },
-    { key: 'revenue_milestones', signal_type: 'revenue_milestone', display_name: 'Revenue Milestones' },
-    { key: 'customer_wins', signal_type: 'customer_win', display_name: 'Customer Wins' },
-    { key: 'pricing_updates', signal_type: 'pricing_update', display_name: 'Pricing Updates' },
-    { key: 'hiring_trends', signal_type: 'hiring_trend', display_name: 'Hiring Trends' },
-    { key: 'general_news', signal_type: 'general_news', display_name: 'General News' },
-    { key: 'founder_contacts', signal_type: 'founder_contact', display_name: 'Founder Contacts' },
-    { key: 'leading_indicators', signal_type: 'leading_indicator', display_name: 'Leading Indicators' },
-    { key: 'competitive_landscape', signal_type: 'competitive_landscape', display_name: 'Competitive Landscape' },
-    { key: 'fundraising_signals', signal_type: 'fundraising_signal', display_name: 'Fundraising Signals' },
-  ];
-
-  const sections: ReportSection[] = [];
-  for (const entry of LEGACY_MAP) {
-    const items = (raw as unknown as Record<string, unknown>)[entry.key] as ReportSignal[] | undefined;
-    if (items && items.length > 0) {
-      sections.push({
-        signal_type: entry.signal_type,
-        display_name: entry.display_name,
-        items,
-      });
-    }
-  }
-
-  return {
-    company_overview: raw.company_overview,
-    sections,
-    ai_summary: raw.ai_summary,
-    ai_summary_type: raw.ai_summary_type,
-  };
 }
 
 export interface ReportSignal {
@@ -150,18 +101,15 @@ export interface ReportSignal {
 
 // ---------- API Request / Response ----------
 
-export interface StoreCompanyRequest {
+export interface AddCompanyRequest {
   website_url: string;
   page_title?: string;
 }
 
-export interface StoreCompanyResponse {
+export interface AddCompanyResponse {
   success: boolean;
   company: Company;
-}
-
-export interface RunAgentsRequest {
-  company_id: string;
+  already_existed: boolean;
 }
 
 export interface SetEmailRequest {
@@ -242,30 +190,13 @@ export interface SignalFinding {
   signal_definition_id?: string;
 }
 
-// ---------- SSE Events ----------
-
-export type SSEEventType =
-  | 'agent_connecting'
-  | 'agent_browsing'
-  | 'agent_streaming_url'
-  | 'agent_status'
-  | 'agent_complete'
-  | 'agent_error'
-  | 'pipeline_complete'
-  | 'pipeline_error'
-  | 'discovery_complete';
-
-export interface SSEEvent {
-  type: SSEEventType;
-  data: AgentStatusUpdate | { message: string } | Company;
-}
-
 // ---------- Signal Definitions ----------
 
 export interface SignalDefinition {
   id: string;
-  organization_id: string;
   company_id: string | null;
+  is_default: boolean;
+  created_by: string | null;
   name: string;
   signal_type: string;
   display_name: string;
@@ -293,4 +224,40 @@ export interface DiscoveryResult {
   blog_url: string;
   pricing_url: string;
   pricing_model: string;
+}
+
+// ---------- Chat ----------
+
+export interface ChatSession {
+  session_id: string;
+  company_id: string;
+  user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessage {
+  message_id: string;
+  session_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  parts: unknown[] | null;
+  created_at: string;
+}
+
+// ---------- Pipeline ----------
+
+export interface PipelineResult {
+  companiesProcessed: number;
+  results: CompanyPipelineResult[];
+  elapsed_seconds: number;
+}
+
+export interface CompanyPipelineResult {
+  companyId: string;
+  companyName: string;
+  signalCount: number;
+  reportId?: string;
+  emailsSent: number;
+  error?: string;
 }

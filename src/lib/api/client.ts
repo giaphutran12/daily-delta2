@@ -3,6 +3,8 @@ import type {
   Organization,
   OrganizationMember,
   Company,
+  TrackedCompany,
+  Signal,
   Report,
   ReportData,
   ReportSection,
@@ -23,7 +25,7 @@ export function getCurrentOrgId(): string | null {
   return currentOrgId;
 }
 
-async function getAuthHeaders(): Promise<Record<string, string>> {
+export async function getAuthHeaders(): Promise<Record<string, string>> {
   const supabase = createClient();
   const {
     data: { session },
@@ -59,43 +61,15 @@ async function authFetch(url: string, opts: RequestInit = {}): Promise<Response>
   return res;
 }
 
-export type { Organization, OrganizationMember, Company, Report, ReportData, ReportSection, ReportSignal, SignalDefinition };
-
-export type EmailFrequency = "daily" | "every_3_days" | "weekly" | "monthly" | "only_on_run";
+export type { Organization, OrganizationMember, Company, TrackedCompany, Signal, Report, ReportData, ReportSection, ReportSignal, SignalDefinition };
 
 export interface UserSettings {
   email: string | null;
-  email_frequency: EmailFrequency;
 }
 
-export interface AgentState {
-  agentId: string;
-  agentType: string;
-  agentName: string;
-  status: "connecting" | "browsing" | "analyzing" | "complete" | "error";
-  message?: string;
-  streamingUrl?: string;
-  findings?: { signals: Array<{ signal_type: string; title: string; summary: string; source: string }> };
-  error?: string;
-}
-
-export interface ActiveRun {
-  companyId: string;
-  companyName: string;
-  agents: AgentState[];
-  isComplete: boolean;
-  liveReport: ReportData | null;
-  emailSent?: boolean;
-  startedAt: number;
-  queued?: boolean;
-}
-
-export interface StopRunResult {
-  report_id: string;
-  report_data: ReportData;
-  total_signals: number;
-  email_sent: boolean;
-}
+// ---------------------------------------------------------------------------
+// Organizations
+// ---------------------------------------------------------------------------
 
 export async function getOrganizations(): Promise<Organization[]> {
   const res = await authFetch(`${API_BASE}/organizations`);
@@ -170,22 +144,39 @@ export async function getInvitationDetails(token: string): Promise<Invitation & 
   return res.json();
 }
 
-export async function checkCompanyDomain(
-  domain: string,
-): Promise<{ exists: boolean; company?: Company }> {
-  const res = await authFetch(`${API_BASE}/companies/check?domain=${encodeURIComponent(domain)}`);
+// ---------------------------------------------------------------------------
+// Companies (platform catalog + tracking)
+// ---------------------------------------------------------------------------
+
+export async function searchCatalog(
+  query?: string,
+  filters?: { industry?: string },
+  limit = 50,
+  offset = 0,
+): Promise<{ companies: Company[]; total: number }> {
+  const params = new URLSearchParams();
+  if (query) params.set("q", query);
+  if (filters?.industry) params.set("industry", filters.industry);
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+
+  const res = await authFetch(`${API_BASE}/companies/catalog?${params}`);
   return res.json();
 }
 
-export async function getCompanies(): Promise<{ companies: Company[]; company_limit: number }> {
+export async function getCompanies(): Promise<{ companies: TrackedCompany[]; tracking_limit: number }> {
   const res = await authFetch(`${API_BASE}/companies`);
   const data = await res.json();
-  return { companies: data.companies ?? [], company_limit: data.company_limit ?? 5 };
+  return { companies: data.companies ?? [], tracking_limit: data.tracking_limit ?? 5 };
 }
 
-export async function deleteCompany(id: string): Promise<void> {
+export async function untrackCompany(id: string): Promise<void> {
   await authFetch(`${API_BASE}/companies/${id}`, { method: "DELETE" });
 }
+
+// ---------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------
 
 export async function deleteReport(id: string): Promise<void> {
   await authFetch(`${API_BASE}/reports/${id}`, { method: "DELETE" });
@@ -212,44 +203,24 @@ export async function getReports(companyId?: string): Promise<Report[]> {
   return data.reports ?? [];
 }
 
-export async function getUserSettings(): Promise<UserSettings> {
-  const res = await authFetch(`${API_BASE}/user-settings`);
-  return res.json();
-}
+// ---------------------------------------------------------------------------
+// Signals (individual findings from pipeline)
+// ---------------------------------------------------------------------------
 
-export async function setEmail(email: string, frequency?: EmailFrequency): Promise<void> {
-  await authFetch(`${API_BASE}/user-settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, email_frequency: frequency }),
-  });
-}
-
-export async function setEmailFrequency(frequency: EmailFrequency): Promise<void> {
-  await authFetch(`${API_BASE}/user-settings`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email_frequency: frequency }),
-  });
-}
-
-export async function stopRun(
+export async function getSignals(
   companyId: string,
-  findings: Array<{
-    signal_type: string;
-    title: string;
-    summary: string;
-    source: string;
-    url?: string;
-  }>,
-): Promise<StopRunResult> {
-  const res = await authFetch(`${API_BASE}/stop-run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ company_id: companyId, findings }),
-  });
+  limit = 200,
+  offset = 0,
+): Promise<{ signals: Signal[]; total: number }> {
+  const res = await authFetch(
+    `${API_BASE}/signals?company_id=${companyId}&limit=${limit}&offset=${offset}`,
+  );
   return res.json();
 }
+
+// ---------------------------------------------------------------------------
+// Signal Definitions
+// ---------------------------------------------------------------------------
 
 export async function getSignalDefinitions(companyId?: string): Promise<SignalDefinition[]> {
   const url = companyId
@@ -266,8 +237,7 @@ export async function createSignalDefinition(data: {
   display_name: string;
   target_url: string;
   search_instructions: string;
-  scope?: "global" | "company";
-  company_id?: string | null;
+  company_id: string;
   sort_order?: number;
 }): Promise<SignalDefinition> {
   const res = await authFetch(`${API_BASE}/signal-definitions`, {
@@ -287,8 +257,6 @@ export async function updateSignalDefinition(
     display_name: string;
     target_url: string;
     search_instructions: string;
-    scope: "global" | "company";
-    company_id: string | null;
     enabled: boolean;
     sort_order: number;
   }>,
@@ -318,6 +286,27 @@ export async function toggleSignalDefinition(
   const result = await res.json();
   return result.definition;
 }
+
+// ---------------------------------------------------------------------------
+// User Settings
+// ---------------------------------------------------------------------------
+
+export async function getUserSettings(): Promise<UserSettings> {
+  const res = await authFetch(`${API_BASE}/user-settings`);
+  return res.json();
+}
+
+export async function setEmail(email: string): Promise<void> {
+  await authFetch(`${API_BASE}/user-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// SSE Helpers (for add company flow)
+// ---------------------------------------------------------------------------
 
 const SSE_STALE_TIMEOUT = 90_000;
 
@@ -364,7 +353,10 @@ async function readSSE(
   }
 }
 
-export function storeCompanySSE(
+/**
+ * Add a company to the platform and track it (SSE for discovery progress)
+ */
+export function addAndTrackCompanySSE(
   websiteUrl: string,
   onEvent: (event: { type: string; data: unknown }) => void,
   onDone: () => void,
@@ -386,7 +378,7 @@ export function storeCompanySSE(
             return;
           }
           const err = await res.json().catch(() => ({ error: res.statusText }));
-          onError(err.error ?? "Failed to store company");
+          onError(err.error ?? "Failed to add company");
           return;
         }
         await readSSE(res, onEvent);
@@ -400,38 +392,14 @@ export function storeCompanySSE(
   return controller;
 }
 
-export function runAgentsSSE(
-  companyId: string,
-  onEvent: (event: { type: string; data: unknown }) => void,
-  onDone: () => void,
-  onError: (err: string) => void,
-): AbortController {
-  const controller = new AbortController();
+// ---------------------------------------------------------------------------
+// Chat
+// ---------------------------------------------------------------------------
 
-  getAuthHeaders().then((authHeaders) => {
-    fetch(`${API_BASE}/run-agents`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ company_id: companyId }),
-      signal: controller.signal,
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          if (res.status === 401) {
-            onError("Session expired. Please sign in again.");
-            return;
-          }
-          const err = await res.json().catch(() => ({ error: res.statusText }));
-          onError(err.error ?? "Failed to run agents");
-          return;
-        }
-        await readSSE(res, onEvent);
-        onDone();
-      })
-      .catch((err: Error) => {
-        if (err.name !== "AbortError") onError(err.message);
-      });
-  });
-
-  return controller;
+export async function getChatMessages(companyId: string): Promise<{
+  messages: Array<{ id: string; role: string; parts: unknown[] }>;
+  sessionId: string;
+}> {
+  const res = await authFetch(`${API_BASE}/chat/${companyId}/messages`);
+  return res.json();
 }

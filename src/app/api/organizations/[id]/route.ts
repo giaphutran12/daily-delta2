@@ -34,7 +34,7 @@ export const PATCH = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
       .from("organizations")
       .update(updates)
       .eq("organization_id", ctx.organizationId)
-      .select("organization_id, name, slug, company_limit, created_at")
+      .select("organization_id, name, slug, tracking_limit, created_at")
       .single();
 
     if (error) throw error;
