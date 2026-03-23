@@ -11,15 +11,19 @@ import {
   ExternalLink,
 } from "lucide-react";
 import {
+  addCompetitor,
+  getComparisonSignals,
   getCompanies,
+  getCompetitors,
   getSignals,
   getSignalDefinitions,
   createSignalDefinition,
   deleteSignalDefinition,
+  removeCompetitor,
   untrackCompany,
   type TrackedCompany,
 } from "@/lib/api/client";
-import type { SignalDefinition, Signal } from "@/lib/types";
+import type { CompetitorLink, SignalDefinition, Signal } from "@/lib/types";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -129,6 +133,59 @@ function groupSignalsByDay(signals: Signal[]) {
   });
 }
 
+function getIndustryColor(industry: string | null | undefined): string {
+  const palette = [
+    "bg-blue-100 text-blue-800 border-blue-200",
+    "bg-emerald-100 text-emerald-800 border-emerald-200",
+    "bg-amber-100 text-amber-800 border-amber-200",
+    "bg-rose-100 text-rose-800 border-rose-200",
+    "bg-violet-100 text-violet-800 border-violet-200",
+    "bg-cyan-100 text-cyan-800 border-cyan-200",
+  ];
+
+  const seed = (industry ?? "unknown")
+    .split("")
+    .reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return palette[seed % palette.length];
+}
+
+function sortSignalsByPriority(signals: Signal[]): Signal[] {
+  return [...signals].sort((a, b) => {
+    const scoreDelta = (b.priority_score ?? 0) - (a.priority_score ?? 0);
+    if (scoreDelta !== 0) return scoreDelta;
+    return (
+      new Date(b.detected_at ?? b.created_at).getTime() -
+      new Date(a.detected_at ?? a.created_at).getTime()
+    );
+  });
+}
+
+function groupTimelineSignals(signals: Signal[]) {
+  const groupedByDay = new Map<string, Signal[]>();
+  for (const signal of signals) {
+    const day = signal.detected_at
+      ? new Date(signal.detected_at).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })
+      : "Date Unknown";
+    if (!groupedByDay.has(day)) groupedByDay.set(day, []);
+    groupedByDay.get(day)!.push(signal);
+  }
+
+  return [...groupedByDay.entries()]
+    .sort((a, b) => {
+      if (a[0] === "Date Unknown") return 1;
+      if (b[0] === "Date Unknown") return -1;
+      return new Date(b[0]).getTime() - new Date(a[0]).getTime();
+    })
+    .map(([day, daySignals]) => ({
+      day,
+      signals: sortSignalsByPriority(daySignals),
+    }));
+}
+
 // --- Main Page ---
 
 export default function CompanyDetailPage() {
@@ -144,6 +201,15 @@ export default function CompanyDetailPage() {
   // Timeline signals state
   const [timelineSignals, setTimelineSignals] = useState<Signal[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(true);
+  const [comparisonSignals, setComparisonSignals] = useState<Signal[]>([]);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const [competitors, setCompetitors] = useState<CompetitorLink[]>([]);
+  const [suggestions, setSuggestions] = useState<TrackedCompany[]>([]);
+  const [competitorsLoading, setCompetitorsLoading] = useState(true);
+  const [competitorWebsite, setCompetitorWebsite] = useState("");
+  const [competitorSaving, setCompetitorSaving] = useState(false);
+  const [competitorMessage, setCompetitorMessage] = useState<string | null>(null);
 
   // Signal definitions state
   const [signalDefs, setSignalDefs] = useState<SignalDefinition[]>([]);
@@ -175,6 +241,34 @@ export default function CompanyDetailPage() {
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
   }, [currentOrg, companyId]);
+
+  useEffect(() => {
+    if (!currentOrg || !companyId) return;
+    setCompetitorsLoading(true);
+    getCompetitors(companyId)
+      .then((result) => {
+        setCompetitors(result.competitors);
+        setSuggestions(result.suggestions as TrackedCompany[]);
+      })
+      .catch(() => {
+        setCompetitors([]);
+        setSuggestions([]);
+      })
+      .finally(() => setCompetitorsLoading(false));
+  }, [currentOrg, companyId]);
+
+  useEffect(() => {
+    if (!compareMode || competitors.length === 0) {
+      setComparisonSignals([]);
+      return;
+    }
+
+    setComparisonLoading(true);
+    getComparisonSignals([companyId, ...competitors.map((c) => c.competitor_company_id)])
+      .then(({ signals }) => setComparisonSignals(signals))
+      .catch(() => setComparisonSignals([]))
+      .finally(() => setComparisonLoading(false));
+  }, [compareMode, competitors, companyId]);
 
   // Fetch timeline signals
   useEffect(() => {
@@ -235,7 +329,44 @@ export default function CompanyDetailPage() {
     setSignalDefs((prev) => prev.filter((s) => s.id !== id));
   };
 
-  const timeline = groupSignalsByDay(timelineSignals);
+  const timeline = groupTimelineSignals(timelineSignals);
+  const comparisonTimeline = groupTimelineSignals(comparisonSignals);
+
+  const handleAddCompetitor = async (
+    payload:
+      | { competitor_company_id: string }
+      | { website_url: string; page_title?: string },
+  ) => {
+    setCompetitorSaving(true);
+    setCompetitorMessage(null);
+    try {
+      const result = await addCompetitor(companyId, payload);
+      const next = await getCompetitors(companyId);
+      setCompetitors(next.competitors);
+      setSuggestions(next.suggestions as TrackedCompany[]);
+      setCompareMode(true);
+      setCompetitorWebsite("");
+      setCompetitorMessage(
+        result.refreshQueued
+          ? `${result.competitor.company_name} was added. Fresh signals are being prepared now.`
+          : `${result.competitor.company_name} was added to the competitor timeline.`,
+      );
+    } catch {
+      setCompetitorMessage("Failed to add competitor.");
+    } finally {
+      setCompetitorSaving(false);
+    }
+  };
+
+  const handleRemoveCompetitor = async (competitorCompanyId: string) => {
+    await removeCompetitor(companyId, competitorCompanyId);
+    const next = await getCompetitors(companyId);
+    setCompetitors(next.competitors);
+    setSuggestions(next.suggestions as TrackedCompany[]);
+    if (next.competitors.length === 0) {
+      setCompareMode(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -339,27 +470,120 @@ export default function CompanyDetailPage() {
 
         {/* Timeline Tab */}
         <TabsContent value="timeline" className="mt-4">
-          {timelineLoading ? (
+          <div className="mb-4 rounded-xl border bg-muted/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Competitor Timeline</p>
+                <p className="text-xs text-muted-foreground">
+                  Compare {company!.company_name} against competitors you choose.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant={compareMode ? "default" : "outline"}
+                disabled={competitors.length === 0}
+                onClick={() => setCompareMode((prev) => !prev)}
+              >
+                {compareMode ? "Back to company timeline" : "View competitors timeline"}
+              </Button>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Badge variant="secondary">{company!.company_name}</Badge>
+              {competitors.map((entry) => (
+                <div
+                  key={entry.competitor_company_id}
+                  className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs ${getIndustryColor(
+                    entry.competitor.industry,
+                  )}`}
+                >
+                  <span>{entry.competitor.company_name}</span>
+                  <button
+                    type="button"
+                    onClick={() => void handleRemoveCompetitor(entry.competitor_company_id)}
+                    className="rounded-full opacity-70 transition hover:opacity-100"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <Input
+                value={competitorWebsite}
+                onChange={(e) => setCompetitorWebsite(e.target.value)}
+                placeholder="Add competitor by website, e.g. https://google.com"
+              />
+              <Button
+                disabled={!competitorWebsite.trim() || competitorSaving}
+                onClick={() =>
+                  void handleAddCompetitor({ website_url: competitorWebsite.trim() })
+                }
+              >
+                {competitorSaving ? "Adding..." : "Add competitor"}
+              </Button>
+            </div>
+
+            {competitorMessage && (
+              <p className="mt-2 text-xs text-muted-foreground">{competitorMessage}</p>
+            )}
+
+            {!competitorsLoading && suggestions.length > 0 && (
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Suggested competitors
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {suggestions.slice(0, 6).map((suggestion) => (
+                    <Button
+                      key={suggestion.company_id}
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        void handleAddCompetitor({
+                          competitor_company_id: suggestion.company_id,
+                        })
+                      }
+                    >
+                      {suggestion.company_name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {(compareMode ? comparisonLoading : timelineLoading) ? (
             <div className="flex flex-col gap-4">
               <Skeleton className="h-6 w-40" />
               <Skeleton className="h-20 w-full" />
               <Skeleton className="h-20 w-full" />
               <Skeleton className="h-20 w-full" />
             </div>
-          ) : timeline.length === 0 ? (
+          ) : compareMode && competitors.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 rounded-xl border bg-muted/30 py-16 text-center">
+              <p className="text-sm font-medium">No competitors yet</p>
+              <p className="text-xs text-muted-foreground">
+                Add a competitor above to compare what they are doing against {company!.company_name}.
+              </p>
+            </div>
+          ) : (compareMode ? comparisonTimeline : timeline).length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 rounded-xl border bg-muted/30 py-16 text-center">
               <p className="text-sm font-medium">No signals yet</p>
               <p className="text-xs text-muted-foreground">
-                Signals will appear here once the platform processes this
-                company.
+                {compareMode
+                  ? "Signals will appear here once the selected competitors have fresh data."
+                  : "Signals will appear here once the platform processes this company."}
               </p>
             </div>
           ) : (
             <div className="relative">
-              {timeline.map(({ day, groups }, dayIdx) => (
+              {(compareMode ? comparisonTimeline : timeline).map(
+                ({ day, signals }, dayIdx, allDays) => (
                 <div key={day} className="relative pb-8 last:pb-0">
                   {/* Vertical line */}
-                  {dayIdx < timeline.length - 1 && (
+                  {dayIdx < allDays.length - 1 && (
                     <div className="absolute left-[7px] top-5 bottom-0 w-px bg-muted-foreground/20" />
                   )}
 
@@ -370,68 +594,82 @@ export default function CompanyDetailPage() {
                       {day}
                     </h3>
                     <Badge variant="secondary" className="text-xs">
-                      {groups.reduce((sum, [, sigs]) => sum + sigs.length, 0)}
+                      {signals.length}
                     </Badge>
                   </div>
 
-                  {/* Signal groups for this day */}
+                  {/* Signals for this day */}
                   <div className="ml-[7px] border-l border-muted-foreground/20 pl-6 flex flex-col gap-4">
-                    {groups.map(([signalType, signals]) => (
-                      <div key={signalType}>
-                        <h4 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-                          {signalTypeLabel(signalType)}
-                        </h4>
-                        <div className="flex flex-col gap-3">
-                          {signals.map((signal) => (
-                            <div
-                              key={signal.signal_id}
-                              className="rounded-lg border bg-card p-3"
+                    {signals.map((signal) => (
+                      <div
+                        key={signal.signal_id}
+                        className="rounded-lg border bg-card p-3"
+                      >
+                        <div className="mb-2 flex flex-wrap items-center gap-2">
+                          <Badge
+                            variant="outline"
+                            className={signal.company ? getIndustryColor(signal.company.industry) : ""}
+                          >
+                            {signal.company?.company_name ?? company!.company_name}
+                          </Badge>
+                          <Badge variant="secondary">
+                            {signalTypeLabel(signal.signal_type)}
+                          </Badge>
+                          <Badge
+                            variant="outline"
+                            className={
+                              signal.priority_tier === "high"
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : signal.priority_tier === "medium"
+                                  ? "border-amber-200 bg-amber-50 text-amber-700"
+                                  : "border-slate-200 bg-slate-50 text-slate-700"
+                            }
+                          >
+                            {signal.priority_tier ?? "low"} signal
+                          </Badge>
+                        </div>
+                        <p className="text-sm font-medium leading-snug">
+                          {signal.url ? (
+                            <a
+                              href={signal.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="hover:underline inline-flex items-center gap-1"
                             >
-                              <p className="text-sm font-medium leading-snug">
-                                {signal.url ? (
-                                  <a
-                                    href={signal.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="hover:underline inline-flex items-center gap-1"
-                                  >
-                                    {signal.title}
-                                    <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                  </a>
-                                ) : (
-                                  signal.title
+                              {signal.title}
+                              <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                            </a>
+                          ) : (
+                            signal.title
+                          )}
+                        </p>
+                        {signal.content && (
+                          <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
+                            {signal.content}
+                          </p>
+                        )}
+                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                          <p className="text-xs text-muted-foreground/70">
+                            via {signal.source}
+                            {signal.detected_at && (
+                              <>
+                                {" "}&middot;{" "}
+                                {new Date(signal.detected_at).toLocaleDateString(
+                                  "en-US",
+                                  {
+                                    month: "short",
+                                    day: "numeric",
+                                    year: "numeric",
+                                  },
                                 )}
-                              </p>
-                              {signal.content && (
-                                <p className="mt-1 text-sm text-muted-foreground leading-relaxed">
-                                  {signal.content}
-                                </p>
-                              )}
-                              <div className="mt-1.5 flex items-center justify-between gap-2">
-                                <p className="text-xs text-muted-foreground/70">
-                                  via {signal.source}
-                                  {signal.detected_at && (
-                                    <>
-                                      {" "}&middot;{" "}
-                                      {new Date(signal.detected_at).toLocaleDateString(
-                                        "en-US",
-                                        {
-                                          month: "short",
-                                          day: "numeric",
-                                          year: "numeric",
-                                        },
-                                      )}
-                                    </>
-                                  )}
-                                </p>
-                                {signal.created_at && (
-                                  <p className="text-xs text-muted-foreground/50 shrink-0">
-                                    Discovered {formatRelativeTime(signal.created_at)}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
+                              </>
+                            )}
+                          </p>
+                          {signal.created_at && (
+                            <p className="text-xs text-muted-foreground/50 shrink-0">
+                              Discovered {formatRelativeTime(signal.created_at)}
+                            </p>
+                          )}
                         </div>
                       </div>
                     ))}

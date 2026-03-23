@@ -1,6 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { User } from "@/lib/types";
 
+export type EmailFrequency =
+  | "daily"
+  | "every_3_days"
+  | "weekly"
+  | "monthly";
+
 export async function ensureUser(
   userId: string,
   email: string,
@@ -31,19 +37,37 @@ export async function ensureUser(
 export async function setUserEmail(
   userId: string,
   email: string,
+  emailFrequency?: EmailFrequency,
 ): Promise<User> {
   const supabase = createAdminClient();
   await ensureUser(userId, email);
 
+  const updates: Record<string, unknown> = { email };
+  if (emailFrequency) updates.email_frequency = emailFrequency;
+
   const { data, error } = await supabase
     .from("users")
-    .update({ email })
+    .update(updates)
     .eq("user_id", userId)
     .select("user_id, email, created_at")
     .single();
 
   if (error) throw new Error(`Failed to update email: ${error.message}`);
   return rowToUser(data);
+}
+
+export async function setEmailFrequency(
+  userId: string,
+  frequency: EmailFrequency,
+): Promise<void> {
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("users")
+    .update({ email_frequency: frequency })
+    .eq("user_id", userId);
+
+  if (error) throw new Error(`Failed to update frequency: ${error.message}`);
 }
 
 export async function getUserEmail(
@@ -62,17 +86,19 @@ export async function getUserEmail(
 
 export async function getUserSettings(userId: string): Promise<{
   email: string | null;
+  email_frequency: EmailFrequency;
 }> {
   const supabase = createAdminClient();
 
   const { data } = await supabase
     .from("users")
-    .select("email")
+    .select("email, email_frequency")
     .eq("user_id", userId)
     .maybeSingle();
 
   return {
     email: data?.email ?? null,
+    email_frequency: (data?.email_frequency as EmailFrequency) ?? "daily",
   };
 }
 

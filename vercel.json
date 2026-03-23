@@ -1,6 +1,12 @@
 {
   "framework": "nextjs",
   "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/trigger-pipeline",
+      "schedule": "0 11 * * *"
+    }
+  ],
   "functions": {
     "src/app/api/companies/route.ts": { "maxDuration": 800 },
     "src/app/api/trigger-pipeline/route.ts": { "maxDuration": 800 },

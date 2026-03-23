@@ -68,6 +68,14 @@ export interface Signal {
   url: string | null;
   detected_at: string | null;
   created_at: string;
+  priority_score?: number;
+  priority_tier?: "high" | "medium" | "low";
+  company?: {
+    company_id: string;
+    company_name: string;
+    industry: string | null;
+    website_url: string;
+  };
 }
 
 export interface Report {
@@ -265,4 +273,13 @@ export interface CompanyPipelineResult {
 export interface DigestCompany {
   company: Company;
   findings: SignalFinding[];
+}
+
+export interface CompetitorLink {
+  organization_id: string;
+  company_id: string;
+  competitor_company_id: string;
+  created_at: string;
+  created_by: string | null;
+  competitor: Company;
 }

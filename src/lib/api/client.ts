@@ -11,6 +11,7 @@ import type {
   ReportSignal,
   SignalDefinition,
   Invitation,
+  CompetitorLink,
 } from "@/lib/types";
 
 const API_BASE = "/api";
@@ -61,10 +62,13 @@ async function authFetch(url: string, opts: RequestInit = {}): Promise<Response>
   return res;
 }
 
-export type { Organization, OrganizationMember, Company, TrackedCompany, Signal, Report, ReportData, ReportSection, ReportSignal, SignalDefinition };
+export type { Organization, OrganizationMember, Company, TrackedCompany, Signal, Report, ReportData, ReportSection, ReportSignal, SignalDefinition, CompetitorLink };
+
+export type EmailFrequency = "daily" | "every_3_days" | "weekly" | "monthly";
 
 export interface UserSettings {
   email: string | null;
+  email_frequency: EmailFrequency;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +222,52 @@ export async function getSignals(
   return res.json();
 }
 
+export async function getComparisonSignals(
+  companyIds: string[],
+  limit = 500,
+): Promise<{ signals: Signal[]; total: number }> {
+  const params = new URLSearchParams();
+  params.set("company_ids", companyIds.join(","));
+  params.set("limit", String(limit));
+  const res = await authFetch(`${API_BASE}/signals?${params}`);
+  return res.json();
+}
+
+export async function getCompetitors(
+  companyId: string,
+): Promise<{ competitors: CompetitorLink[]; suggestions: Company[] }> {
+  const res = await authFetch(`${API_BASE}/companies/${companyId}/competitors`);
+  return res.json();
+}
+
+export async function addCompetitor(
+  companyId: string,
+  payload:
+    | { competitor_company_id: string }
+    | { website_url: string; page_title?: string },
+): Promise<{ success: boolean; competitor: Company; refreshQueued: boolean }> {
+  const res = await authFetch(`${API_BASE}/companies/${companyId}/competitors`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+export async function removeCompetitor(
+  companyId: string,
+  competitorCompanyId: string,
+): Promise<void> {
+  await authFetch(
+    `${API_BASE}/companies/${companyId}/competitors?competitor_company_id=${encodeURIComponent(
+      competitorCompanyId,
+    )}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Signal Definitions
 // ---------------------------------------------------------------------------
@@ -296,11 +346,24 @@ export async function getUserSettings(): Promise<UserSettings> {
   return res.json();
 }
 
-export async function setEmail(email: string): Promise<void> {
+export async function setEmail(
+  email: string,
+  frequency?: EmailFrequency,
+): Promise<void> {
   await authFetch(`${API_BASE}/user-settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, email_frequency: frequency }),
+  });
+}
+
+export async function setEmailFrequency(
+  frequency: EmailFrequency,
+): Promise<void> {
+  await authFetch(`${API_BASE}/user-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ frequency }),
   });
 }
 
