@@ -40,8 +40,12 @@ export const POST = withAuth(async (req: NextRequest, ctx: AuthContext) => {
           { status: 400 },
         );
       }
+
       await setEmailFrequency(ctx.userId, parsed.data.frequency);
-      return Response.json({ success: true, email_frequency: parsed.data.frequency });
+      return Response.json({
+        success: true,
+        email_frequency: parsed.data.frequency,
+      });
     }
 
     if (body.email) {

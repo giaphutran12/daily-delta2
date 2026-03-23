@@ -1,3 +1,4 @@
+import { useSimulatedProgress } from '../hooks/use-simulated-progress';
 import { AgentState } from '../api/client';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -26,14 +27,16 @@ const DOT_COLORS: Record<string, string> = {
 
 interface AgentCardProps {
   agent: AgentState;
+  startedAt: number;
 }
 
-export function AgentCard({ agent }: AgentCardProps) {
+export function AgentCard({ agent, startedAt }: AgentCardProps) {
   const statusColor = STATUS_COLORS[agent.status] || 'text-black/40';
   const statusLabel = STATUS_LABELS[agent.status] || agent.status;
   const dotColor = DOT_COLORS[agent.status] || 'bg-black/30';
   const isActive = agent.status === 'browsing' || agent.status === 'analyzing' || agent.status === 'connecting';
   const signalCount = agent.findings?.signals?.length ?? 0;
+  const progress = useSimulatedProgress(agent.status, startedAt, agent.agentId);
 
   return (
     <div className="flex flex-col bg-white rounded-lg border border-black/8 overflow-hidden">
@@ -47,6 +50,14 @@ export function AgentCard({ agent }: AgentCardProps) {
           style={{ fontFamily: "'Departure Mono', monospace" }}>
           {statusLabel}
         </span>
+      </div>
+
+      {/* Progress bar */}
+      <div className="h-1 w-full bg-black/5 overflow-hidden">
+        <div
+          className="h-full bg-[#1342FF] transition-all duration-200"
+          style={{ width: `${progress}%` }}
+        />
       </div>
 
       {/* Body */}

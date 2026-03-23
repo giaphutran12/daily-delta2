@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { withOrg, OrgAuthContext } from "@/app/api/_lib/with-auth";
 import { getReportById, deleteReport } from "@/services/report-service";
 import { buildReportEmail } from "@/services/email-service";
+import { isTracking } from "@/services/company-service";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const GET = withOrg(
@@ -17,11 +18,10 @@ export const GET = withOrg(
         return Response.json({ error: "Report not found" }, { status: 404 });
       }
 
-      if (report.organization_id !== ctx.organizationId) {
-        return Response.json(
-          { error: "Report does not belong to this organization" },
-          { status: 403 },
-        );
+      // Verify the org is tracking this company
+      const tracking = await isTracking(ctx.organizationId, report.company_id);
+      if (!tracking) {
+        return Response.json({ error: "Report not found" }, { status: 404 });
       }
 
       const preview = req.nextUrl.searchParams.get("preview");
@@ -67,11 +67,10 @@ export const DELETE = withOrg(
         return Response.json({ error: "Report not found" }, { status: 404 });
       }
 
-      if (report.organization_id !== ctx.organizationId) {
-        return Response.json(
-          { error: "Report does not belong to this organization" },
-          { status: 403 },
-        );
+      // Verify the org is tracking this company
+      const tracking = await isTracking(ctx.organizationId, report.company_id);
+      if (!tracking) {
+        return Response.json({ error: "Report not found" }, { status: 404 });
       }
 
       await deleteReport(reportId);

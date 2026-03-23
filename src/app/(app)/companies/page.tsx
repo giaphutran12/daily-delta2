@@ -1,21 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Play, X, Settings2 } from "lucide-react";
+import { Loader2, Plus } from "lucide-react";
+import ShinyText from "@/components/ShinyText";
 import {
   getCompanies,
-  deleteCompany,
-  storeCompanySSE,
-  getSignalDefinitions,
-  createSignalDefinition,
-  deleteSignalDefinition,
+  addAndTrackCompanySSE,
+  searchCatalog,
+  type TrackedCompany,
   type Company,
 } from "@/lib/api/client";
-import type { SignalDefinition } from "@/lib/types";
-import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth/AuthContext";
-import { useRuns } from "@/lib/context/RunsContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -35,74 +31,39 @@ import {
   DialogFooter,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 
 const SKELETON_ROWS = ["row-a", "row-b", "row-c"];
-
-interface PendingSignal {
-  id: string;
-  name: string;
-  target_url: string;
-  search_instructions: string;
-}
-
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_|_$/g, "");
-}
+const CATALOG_DISPLAY_LIMIT = 15;
 
 export default function CompaniesPage() {
-  const { currentOrg } = useAuth();
   const router = useRouter();
-  const { activeRuns, handleRunCompany } = useRuns();
+  const { currentOrg } = useAuth();
 
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [companyLimit, setCompanyLimit] = useState(5);
+  const [companies, setCompanies] = useState<TrackedCompany[]>([]);
+  const [trackingLimit, setTrackingLimit] = useState(5);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Add company dialog state
   const [addOpen, setAddOpen] = useState(false);
+  const [addMode, setAddMode] = useState<"search" | "url">("search");
   const [addUrl, setAddUrl] = useState("");
   const [addStoring, setAddStoring] = useState(false);
   const [addMsg, setAddMsg] = useState("");
 
-  const [globalSignals, setGlobalSignals] = useState<SignalDefinition[]>([]);
-  const [pendingSignals, setPendingSignals] = useState<PendingSignal[]>([]);
-  const [pendingFormOpen, setPendingFormOpen] = useState(false);
-  const [pendingForm, setPendingForm] = useState({
-    name: "",
-    target_url: "",
-    search_instructions: "",
-  });
-
-  // Edit company signals
-  const [editSignalsCompany, setEditSignalsCompany] = useState<Company | null>(null);
-  const [editSignalsOpen, setEditSignalsOpen] = useState(false);
-  const [companySignals, setCompanySignals] = useState<SignalDefinition[]>([]);
-  const [companySignalsLoading, setCompanySignalsLoading] = useState(false);
-  const [editSignalForm, setEditSignalForm] = useState({ name: "", target_url: "", search_instructions: "" });
-  const [editSignalFormOpen, setEditSignalFormOpen] = useState(false);
-  const [editSignalError, setEditSignalError] = useState("");
+  // Catalog state — loaded on dialog open, filtered client-side
+  const [catalogAll, setCatalogAll] = useState<Company[]>([]);
+  const [catalogTotal, setCatalogTotal] = useState(0);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogFilter, setCatalogFilter] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const fetchCompanies = useCallback(async () => {
     try {
-      const { companies: data, company_limit } = await getCompanies();
+      const { companies: data, tracking_limit } = await getCompanies();
       setCompanies(data);
-      setCompanyLimit(company_limit);
+      setTrackingLimit(tracking_limit);
     } catch {
       setCompanies([]);
     }
@@ -114,71 +75,73 @@ export default function CompaniesPage() {
     fetchCompanies().finally(() => setLoading(false));
   }, [currentOrg, fetchCompanies]);
 
+  // Load catalog when dialog opens
   useEffect(() => {
     if (!addOpen) return;
-    getSignalDefinitions()
-      .then((defs) => setGlobalSignals(defs.filter((d) => d.scope === "global" && d.enabled)))
-      .catch(() => setGlobalSignals([]));
+    setCatalogLoading(true);
+    setCatalogFilter("");
+    searchCatalog(undefined, undefined, 500, 0)
+      .then(({ companies: results, total }) => {
+        setCatalogAll(results);
+        setCatalogTotal(total);
+      })
+      .catch((err) => {
+        console.error("[CATALOG] Failed to load catalog:", err);
+        setCatalogAll([]);
+        setCatalogTotal(0);
+      })
+      .finally(() => setCatalogLoading(false));
   }, [addOpen]);
 
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteCompany(id);
-      await fetchCompanies();
-    } catch {
-      console.error("[COMPANIES] Failed to delete company");
-    }
-  };
+  // Debounced server search when filter changes (for better results)
+  useEffect(() => {
+    if (!addOpen || !catalogFilter.trim()) return;
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      searchCatalog(catalogFilter.trim(), undefined, 500, 0)
+        .then(({ companies: results, total }) => {
+          setCatalogAll(results);
+          setCatalogTotal(total);
+        })
+        .catch(() => {});
+    }, 300);
+    return () => clearTimeout(debounceRef.current);
+  }, [catalogFilter, addOpen]);
 
-  const handleAddCompany = (e: React.FormEvent) => {
+  const handleAddByUrl = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = addUrl.trim();
     if (!trimmed) return;
-
-    if (companies.length >= companyLimit) {
-      setAddMsg(`Maximum ${companyLimit} companies. Delete one before adding.`);
-      return;
-    }
 
     let finalUrl = trimmed;
     if (!finalUrl.startsWith("http")) finalUrl = `https://${finalUrl}`;
 
     setAddStoring(true);
-    setAddMsg("Storing company...");
+    setAddMsg("Adding company...");
 
-    let storedCompanyId: string | null = null;
-
-    storeCompanySSE(
+    addAndTrackCompanySSE(
       finalUrl,
       (event) => {
-       if (event.type === "company_stored") {
-           setAddMsg("Company stored! Running discovery...");
-           const data = event.data as { company_id?: string };
-           storedCompanyId = data?.company_id ?? null;
-         }
+        if (event.type === "company_stored") {
+          setAddMsg("Company added and tracked!");
+        }
+        if (event.type === "pipeline_complete") {
+          setAddStoring(false);
+          setAddMsg("");
+          setAddUrl("");
+          setAddOpen(false);
+          void fetchCompanies();
+        }
+        if (event.type === "discovery_complete") {
+          void fetchCompanies();
+        }
       },
       async () => {
-        if (storedCompanyId && pendingSignals.length > 0) {
-          await Promise.allSettled(
-            pendingSignals.map((s) =>
-              createSignalDefinition({
-                name: s.name,
-                signal_type: slugify(s.name),
-                display_name: s.name,
-                target_url: s.target_url,
-                search_instructions: s.search_instructions,
-                scope: "company",
-                company_id: storedCompanyId,
-              }),
-            ),
-          );
-        }
+        // Stream closed — ensure dialog is cleaned up (no-op if already handled)
         setAddStoring(false);
         setAddMsg("");
         setAddUrl("");
-        setPendingSignals([]);
         setAddOpen(false);
-        await fetchCompanies();
       },
       (err) => {
         setAddStoring(false);
@@ -187,60 +150,53 @@ export default function CompaniesPage() {
     );
   };
 
-  const openEditSignals = async (company: Company) => {
-    setEditSignalsCompany(company);
-    setEditSignalsOpen(true);
-    setCompanySignalsLoading(true);
-    setEditSignalError("");
-    setEditSignalFormOpen(false);
-    try {
-      const sigs = await getSignalDefinitions(company.company_id);
-      setCompanySignals(sigs.filter((s) => s.scope === "company"));
-    } catch {
-      setEditSignalError("Failed to load signals");
-    } finally {
-      setCompanySignalsLoading(false);
-    }
-  };
+  const isAlreadyTracking = (companyId: string) =>
+    companies.some((c) => c.company_id === companyId);
 
-  const handleCreateCompanySignal = async () => {
-    if (!editSignalsCompany || !editSignalForm.name.trim()) return;
-    setEditSignalError("");
-    try {
-      const created = await createSignalDefinition({
-        name: editSignalForm.name,
-        signal_type: slugify(editSignalForm.name),
-        display_name: editSignalForm.name,
-        target_url: editSignalForm.target_url,
-        search_instructions: editSignalForm.search_instructions,
-        scope: "company",
-        company_id: editSignalsCompany.company_id,
-      });
-      setCompanySignals((prev) => [...prev, created]);
-      setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-      setEditSignalFormOpen(false);
-    } catch {
-      setEditSignalError("Failed to create signal");
-    }
-  };
+  const handleTrackFromCatalog = async (companyUrl: string) => {
+    setAddStoring(true);
+    setAddMsg("Tracking company...");
 
-  const handleDeleteCompanySignal = async (id: string) => {
-    await deleteSignalDefinition(id);
-    setCompanySignals((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const onRunCompany = (company: Company) => {
-    handleRunCompany(company);
-    router.push("/active-runs");
-  };
-
-  const isRunningOrQueued = (companyId: string) =>
-    activeRuns.some((r) => r.companyId === companyId && !r.isComplete);
-
-  const isQueuedOnly = (companyId: string) =>
-    activeRuns.some(
-      (r) => r.companyId === companyId && !r.isComplete && r.queued,
+    addAndTrackCompanySSE(
+      companyUrl,
+      (event) => {
+        if (event.type === "pipeline_complete") {
+          setAddStoring(false);
+          setAddMsg("");
+          setAddOpen(false);
+          setCatalogFilter("");
+          void fetchCompanies();
+        }
+        if (event.type === "discovery_complete") {
+          void fetchCompanies();
+        }
+      },
+      async () => {
+        setAddStoring(false);
+        setAddMsg("");
+        setAddOpen(false);
+        setCatalogFilter("");
+      },
+      (err) => {
+        setAddStoring(false);
+        setAddMsg(`Error: ${err}`);
+      },
     );
+  };
+
+  // Client-side filter on catalog results
+  const filteredCatalog = catalogFilter.trim()
+    ? (catalogAll ?? []).filter((c) => {
+        const q = catalogFilter.toLowerCase();
+        return (
+          c.company_name.toLowerCase().includes(q) ||
+          c.domain.toLowerCase().includes(q) ||
+          (c.industry?.toLowerCase().includes(q) ?? false)
+        );
+      })
+    : (catalogAll ?? []);
+
+  const displayedCatalog = filteredCatalog.slice(0, CATALOG_DISPLAY_LIMIT);
 
   const filteredCompanies = companies.filter((c) => {
     if (!searchQuery.trim()) return true;
@@ -256,9 +212,9 @@ export default function CompaniesPage() {
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Companies</h1>
+          <h1 className="text-xl font-semibold">Tracked Companies</h1>
           <p className="text-sm text-muted-foreground">
-            {companies.length}/{companyLimit} companies tracked
+            {companies.length}/{trackingLimit} companies tracked
           </p>
         </div>
 
@@ -270,9 +226,8 @@ export default function CompaniesPage() {
               if (!open) {
                 setAddUrl("");
                 setAddMsg("");
-                setPendingSignals([]);
-                setPendingFormOpen(false);
-                setPendingForm({ name: "", target_url: "", search_instructions: "" });
+                setCatalogFilter("");
+                setAddMode("search");
               }
             }
           }}
@@ -285,177 +240,161 @@ export default function CompaniesPage() {
             <DialogHeader>
               <DialogTitle>Add Company</DialogTitle>
             </DialogHeader>
-            <form
-              onSubmit={handleAddCompany}
-              className="flex flex-col gap-4 py-2"
-            >
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="company-url">Website URL</Label>
+
+            <div className="flex gap-2 border-b pb-2">
+              <button
+                type="button"
+                className={`text-sm px-3 py-1 rounded-md transition-colors ${addMode === "search" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setAddMode("search")}
+              >
+                Search Catalog
+              </button>
+              <button
+                type="button"
+                className={`text-sm px-3 py-1 rounded-md transition-colors ${addMode === "url" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                onClick={() => setAddMode("url")}
+              >
+                Add by URL
+              </button>
+            </div>
+
+            {addMode === "search" ? (
+              <div className="flex flex-col gap-3 py-2">
                 <Input
-                  id="company-url"
-                  placeholder="e.g. stripe.com"
-                  value={addUrl}
-                  onChange={(e) => setAddUrl(e.target.value)}
+                  placeholder="Filter companies..."
+                  value={catalogFilter}
+                  onChange={(e) => setCatalogFilter(e.target.value)}
                   disabled={addStoring}
+                  autoFocus
                 />
-              </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-2">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Global Signals
-                  </p>
-                  <div className="flex flex-col gap-1 rounded-md border bg-muted/30 p-2 min-h-[120px]">
-                    {globalSignals.length === 0 ? (
-                      <p className="text-xs text-muted-foreground p-1">No global signals configured</p>
-                    ) : (
-                      globalSignals.map((s) => (
-                        <div key={s.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 bg-background border text-xs">
-                          <span className="flex-1 truncate">{s.display_name}</span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Custom Signals
-                  </p>
-                  <div className="flex flex-col gap-1 rounded-md border bg-muted/30 p-2 min-h-[120px]">
-                    {pendingSignals.map((s) => (
-                      <div key={s.id} className="flex items-center gap-1.5 rounded px-1.5 py-1 bg-background border text-xs">
-                        <span className="flex-1 truncate">{s.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => setPendingSignals((prev) => prev.filter((p) => p.id !== s.id))}
-                          className="shrink-0 text-muted-foreground hover:text-destructive"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </div>
+                {catalogLoading ? (
+                  <div className="flex flex-col gap-1.5">
+                    {[1, 2, 3].map((k) => (
+                      <Skeleton key={k} className="h-12 w-full" />
                     ))}
-                    <Dialog
-                      open={pendingFormOpen}
-                      onOpenChange={(open) => {
-                        setPendingFormOpen(open);
-                        if (!open) setPendingForm({ name: "", target_url: "", search_instructions: "" });
-                      }}
-                    >
-                      <DialogTrigger render={
-                        <button
-                          type="button"
-                          disabled={addStoring}
-                          className="w-full rounded-md border border-dashed border-muted-foreground/40 py-1.5 text-xs text-muted-foreground hover:border-muted-foreground/70 hover:text-foreground transition-colors mt-1"
-                        />
-                      }>
-                        + Add Signal
-                      </DialogTrigger>
-                      <DialogContent className="sm:max-w-sm">
-                        <DialogHeader>
-                          <DialogTitle>Add Custom Signal</DialogTitle>
-                        </DialogHeader>
-                        <div className="flex flex-col gap-3 py-2">
-                          <div className="flex flex-col gap-1.5">
-                            <Label>Signal name</Label>
-                            <Input
-                              placeholder="e.g. Blog Scanner"
-                              value={pendingForm.name}
-                              onChange={(e) => setPendingForm((p) => ({ ...p, name: e.target.value }))}
-                              autoFocus
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1.5">
-                            <Label>Target URL</Label>
-                            <Input
-                              placeholder="e.g. {website_url}/blog or https://example.com/blog"
-                              value={pendingForm.target_url}
-                              onChange={(e) => setPendingForm((p) => ({ ...p, target_url: e.target.value }))}
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1.5">
-                            <Label>Search instructions</Label>
-                            <Textarea
-                              placeholder="What to look for..."
-                              value={pendingForm.search_instructions}
-                              onChange={(e) => setPendingForm((p) => ({ ...p, search_instructions: e.target.value }))}
-                              rows={3}
-                              className="resize-none"
-                            />
-                          </div>
-                        </div>
-                        <DialogFooter>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => {
-                              setPendingFormOpen(false);
-                              setPendingForm({ name: "", target_url: "", search_instructions: "" });
-                            }}
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            type="button"
-                            disabled={!pendingForm.name.trim()}
-                            onClick={() => {
-                              setPendingSignals((prev) => [
-                                ...prev,
-                                { id: crypto.randomUUID(), ...pendingForm },
-                              ]);
-                              setPendingForm({ name: "", target_url: "", search_instructions: "" });
-                              setPendingFormOpen(false);
-                            }}
-                          >
-                            Add Signal
-                          </Button>
-                        </DialogFooter>
-                      </DialogContent>
-                    </Dialog>
                   </div>
-                </div>
-              </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Showing {displayedCatalog.length} of {catalogTotal} companies
+                      {catalogFilter.trim() ? ` matching "${catalogFilter.trim()}"` : " in catalog"}
+                    </p>
 
-              {addMsg && (
-                <p
-                  className={
-                    addMsg.startsWith("Error")
-                      ? "text-xs text-destructive"
-                      : "text-xs text-muted-foreground"
-                  }
-                >
-                  {addMsg}
-                </p>
-              )}
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    if (!addStoring) {
-                      setAddOpen(false);
-                      setAddUrl("");
-                      setAddMsg("");
-                      setPendingSignals([]);
-                      setPendingFormOpen(false);
-                      setPendingForm({ name: "", target_url: "", search_instructions: "" });
+                    <div className="flex flex-col gap-1 max-h-[360px] overflow-y-auto">
+                      {displayedCatalog.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-6">
+                          {catalogFilter.trim()
+                            ? <>No companies match &ldquo;{catalogFilter.trim()}&rdquo;. Try &ldquo;Add by URL&rdquo; to add a new company.</>
+                            : "No companies in catalog yet."
+                          }
+                        </p>
+                      ) : (
+                        displayedCatalog.map((c) => (
+                          <div
+                            key={c.company_id}
+                            className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-sm font-medium truncate">{c.company_name}</span>
+                              <span className="text-xs text-muted-foreground truncate">
+                                {c.domain}
+                                {c.industry ? ` · ${c.industry}` : ""}
+                              </span>
+                            </div>
+                            {isAlreadyTracking(c.company_id) ? (
+                              <span className="text-xs text-muted-foreground shrink-0">Tracking</span>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="shrink-0"
+                                disabled={addStoring}
+                                onClick={() => handleTrackFromCatalog(c.website_url)}
+                              >
+                                Track
+                              </Button>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {filteredCatalog.length > CATALOG_DISPLAY_LIMIT && (
+                      <p className="text-xs text-muted-foreground text-center">
+                        {filteredCatalog.length - CATALOG_DISPLAY_LIMIT} more — refine your search to see them
+                      </p>
+                    )}
+                  </>
+                )}
+
+                {addMsg && (
+                  <p
+                    className={
+                      addMsg.startsWith("Error")
+                        ? "text-xs text-destructive"
+                        : "text-xs text-muted-foreground"
                     }
-                  }}
-                  disabled={addStoring}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={addStoring || !addUrl.trim()}>
-                  {addStoring ? "Storing..." : "Add Company"}
-                </Button>
-              </DialogFooter>
-            </form>
+                  >
+                    {addMsg}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <form onSubmit={handleAddByUrl} className="flex flex-col gap-4 py-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="company-url">Website URL</Label>
+                  <Input
+                    id="company-url"
+                    placeholder="e.g. stripe.com"
+                    value={addUrl}
+                    onChange={(e) => setAddUrl(e.target.value)}
+                    disabled={addStoring}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    If this company isn&apos;t in our database, it will be added automatically.
+                  </p>
+                </div>
+
+                {addMsg && (
+                  <p
+                    className={
+                      addMsg.startsWith("Error")
+                        ? "text-xs text-destructive"
+                        : "text-xs text-muted-foreground"
+                    }
+                  >
+                    {addMsg}
+                  </p>
+                )}
+
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (!addStoring) {
+                        setAddOpen(false);
+                        setAddUrl("");
+                        setAddMsg("");
+                      }
+                    }}
+                    disabled={addStoring}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={addStoring || !addUrl.trim()}>
+                    {addStoring ? "Adding..." : "Add & Track"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            )}
           </DialogContent>
         </Dialog>
       </div>
 
       <Input
-        placeholder="Search companies..."
+        placeholder="Search tracked companies..."
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         className="max-w-sm"
@@ -471,7 +410,7 @@ export default function CompaniesPage() {
         <div className="flex flex-col items-center justify-center gap-2 rounded-xl border bg-muted/30 py-16 text-center">
           <p className="text-sm font-medium">No companies tracked</p>
           <p className="text-xs text-muted-foreground">
-            Click &ldquo;Add Company&rdquo; to get started.
+            Click &ldquo;Add Company&rdquo; to search our catalog or add by URL.
           </p>
         </div>
       ) : (
@@ -482,249 +421,54 @@ export default function CompaniesPage() {
                 <TableHead>Company</TableHead>
                 <TableHead>Domain</TableHead>
                 <TableHead>Industry</TableHead>
-                <TableHead>Last Run</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead>Last Updated</TableHead>
+
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredCompanies.map((company) => {
-                const running = isRunningOrQueued(company.company_id);
-                const queued = isQueuedOnly(company.company_id);
-                return (
-                  <TableRow key={company.company_id}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        {company.company_name}
-                        {running && !queued && (
-                          <Badge variant="default" className="text-[10px]">
-                            Running
-                          </Badge>
-                        )}
-                        {queued && (
-                          <Badge variant="outline" className="text-[10px]">
-                            Queued
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {company.domain}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {company.industry ?? "—"}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {company.last_agent_run
-                        ? new Date(
-                            company.last_agent_run,
-                          ).toLocaleDateString()
-                        : "Never"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          onClick={() => openEditSignals(company)}
-                          title="Edit custom signals"
-                        >
-                          <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="sr-only">Edit signals for {company.company_name}</span>
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onRunCompany(company)}
-                          disabled={running}
-                        >
-                          <Play className="h-3.5 w-3.5" />
-                          {running
-                            ? queued
-                              ? "Queued"
-                              : "Running"
-                            : "Run Agents"}
-                        </Button>
-
-                        <AlertDialog>
-                          <AlertDialogTrigger
-                            render={
-                              <Button size="icon-sm" variant="ghost" />
-                            }
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="sr-only">
-                              Delete {company.company_name}
-                            </span>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                Delete Company
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This will remove{" "}
-                                <strong>{company.company_name}</strong> and
-                                all its reports and signals. This action
-                                cannot be undone.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                variant="destructive"
-                                onClick={() =>
-                                  handleDelete(company.company_id)
-                                }
-                              >
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {filteredCompanies.map((company) => (
+                <TableRow
+                  key={company.company_id}
+                  className="cursor-pointer"
+                  onClick={() => router.push(`/companies/${company.company_id}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      router.push(`/companies/${company.company_id}`);
+                    }
+                  }}
+                  tabIndex={0}
+                  role="link"
+                >
+                  <TableCell className="font-medium">
+                    <span className="flex items-center gap-2">
+                      {company.company_name}
+                      {company.platform_status === "enriching" && (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                      )}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {company.domain}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {company.platform_status === "enriching" && !company.industry
+                      ? <ShinyText text="Enriching..." className="text-sm" />
+                      : company.industry ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {company.platform_status === "enriching" && !company.last_agent_run
+                      ? <ShinyText text="Enriching..." className="text-sm" />
+                      : company.last_agent_run
+                        ? new Date(company.last_agent_run).toLocaleDateString()
+                        : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>
       )}
-
-      {/* Edit Company Signals Dialog */}
-      <Dialog
-        open={editSignalsOpen}
-        onOpenChange={(open) => {
-          setEditSignalsOpen(open);
-          if (!open) {
-            setEditSignalsCompany(null);
-            setCompanySignals([]);
-            setEditSignalFormOpen(false);
-            setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-            setEditSignalError("");
-          }
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              Custom Signals — {editSignalsCompany?.company_name}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="flex flex-col gap-3 py-2">
-            {editSignalError && (
-              <p className="text-xs text-destructive">{editSignalError}</p>
-            )}
-
-            {companySignalsLoading ? (
-              <div className="flex flex-col gap-1.5">
-                <Skeleton className="h-8 w-full" />
-                <Skeleton className="h-8 w-full" />
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                {companySignals.length === 0 && !editSignalFormOpen && (
-                  <p className="text-sm text-muted-foreground py-2">
-                    No custom signals for this company. Add one to track specific topics.
-                  </p>
-                )}
-                {companySignals.map((sig) => (
-                  <div
-                    key={sig.id}
-                    className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium">{sig.display_name}</div>
-                      {sig.target_url && (
-                        <div className="text-xs text-muted-foreground truncate">{sig.target_url}</div>
-                      )}
-                      {sig.search_instructions && (
-                        <div className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{sig.search_instructions}</div>
-                      )}
-                    </div>
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      onClick={() => handleDeleteCompanySignal(sig.id)}
-                    >
-                      <X className="h-3.5 w-3.5 text-muted-foreground hover:text-destructive" />
-                    </Button>
-                  </div>
-                ))}
-
-                <Dialog
-                  open={editSignalFormOpen}
-                  onOpenChange={(open) => {
-                    setEditSignalFormOpen(open);
-                    if (!open) setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-                  }}
-                >
-                  <DialogTrigger render={
-                    <button
-                      className="w-full rounded-md border border-dashed border-muted-foreground/40 py-2 text-sm text-muted-foreground hover:border-muted-foreground/70 hover:text-foreground transition-colors"
-                    />
-                  }>
-                    + Add Signal
-                  </DialogTrigger>
-                  <DialogContent className="sm:max-w-sm">
-                    <DialogHeader>
-                      <DialogTitle>Add Custom Signal</DialogTitle>
-                    </DialogHeader>
-                    <div className="flex flex-col gap-3 py-2">
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Signal name</Label>
-                        <Input
-                          placeholder="e.g. Blog Scanner"
-                          value={editSignalForm.name}
-                          onChange={(e) => setEditSignalForm((f) => ({ ...f, name: e.target.value }))}
-                          autoFocus
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Target URL</Label>
-                        <Input
-                          placeholder="e.g. {website_url}/blog or https://example.com/blog"
-                          value={editSignalForm.target_url}
-                          onChange={(e) => setEditSignalForm((f) => ({ ...f, target_url: e.target.value }))}
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1.5">
-                        <Label>Search instructions</Label>
-                        <Textarea
-                          placeholder="What to look for..."
-                          value={editSignalForm.search_instructions}
-                          onChange={(e) => setEditSignalForm((f) => ({ ...f, search_instructions: e.target.value }))}
-                          rows={3}
-                          className="resize-none"
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          setEditSignalFormOpen(false);
-                          setEditSignalForm({ name: "", target_url: "", search_instructions: "" });
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        type="button"
-                        disabled={!editSignalForm.name.trim()}
-                        onClick={handleCreateCompanySignal}
-                      >
-                        Add Signal
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

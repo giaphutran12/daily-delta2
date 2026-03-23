@@ -1,6 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Organization, OrganizationMember } from "@/lib/types";
-import { DEFAULT_SIGNAL_DEFINITIONS } from "./signal-defaults";
 
 function generateSlug(name: string): string {
   const base = name
@@ -22,7 +21,7 @@ export async function createOrganization(
   const { data: org, error: orgError } = await supabase
     .from("organizations")
     .insert({ name, slug })
-    .select("organization_id, name, slug, company_limit, created_at")
+    .select("organization_id, name, slug, tracking_limit, created_at")
     .single();
 
   if (orgError) throw new Error(`Failed to create org: ${orgError.message}`);
@@ -41,21 +40,21 @@ export async function createOrganization(
     organization_id: org.organization_id,
     name: org.name,
     slug: org.slug,
-    company_limit: org.company_limit,
+    tracking_limit: org.tracking_limit,
     created_at: org.created_at ?? new Date().toISOString(),
   };
 }
 
-export async function getOrganizationCompanyLimit(orgId: string): Promise<number> {
+export async function getOrganizationTrackingLimit(orgId: string): Promise<number> {
   const supabase = createAdminClient();
 
   const { data } = await supabase
     .from("organizations")
-    .select("company_limit")
+    .select("tracking_limit")
     .eq("organization_id", orgId)
     .maybeSingle();
 
-  return data?.company_limit ?? 5;
+  return data?.tracking_limit ?? 5;
 }
 
 export async function getOrganizationsForUser(
@@ -74,7 +73,7 @@ export async function getOrganizationsForUser(
   const orgIds = memberships.map((m) => m.organization_id);
   const { data: orgs, error: orgsError } = await supabase
     .from("organizations")
-    .select("organization_id, name, slug, company_limit, created_at")
+    .select("organization_id, name, slug, tracking_limit, created_at")
     .in("organization_id", orgIds);
 
   if (orgsError) throw new Error(`Failed to get orgs: ${orgsError.message}`);
@@ -85,7 +84,7 @@ export async function getOrganizationsForUser(
     organization_id: o.organization_id,
     name: o.name,
     slug: o.slug,
-    company_limit: o.company_limit,
+    tracking_limit: o.tracking_limit,
     created_at: o.created_at ?? "",
     role: roleMap.get(o.organization_id) ?? "member",
   }));
@@ -98,7 +97,7 @@ export async function getOrganizationById(
 
   const { data } = await supabase
     .from("organizations")
-    .select("organization_id, name, slug, company_limit, created_at")
+    .select("organization_id, name, slug, tracking_limit, created_at")
     .eq("organization_id", orgId)
     .maybeSingle();
 
@@ -107,7 +106,7 @@ export async function getOrganizationById(
     organization_id: data.organization_id,
     name: data.name,
     slug: data.slug,
-    company_limit: data.company_limit,
+    tracking_limit: data.tracking_limit,
     created_at: data.created_at ?? "",
   };
 }
@@ -210,55 +209,4 @@ export async function removeMember(
   if (error) throw new Error(`Failed to remove member: ${error.message}`);
 }
 
-export async function updateMemberRole(
-  orgId: string,
-  userId: string,
-  role: string,
-): Promise<void> {
-  const supabase = createAdminClient();
 
-  const { error } = await supabase
-    .from("organization_members")
-    .update({ role })
-    .eq("organization_id", orgId)
-    .eq("user_id", userId);
-
-  if (error) throw new Error(`Failed to update role: ${error.message}`);
-}
-
-export async function seedDefaultDefinitions(orgId: string): Promise<void> {
-  const supabase = createAdminClient();
-
-  const { data: existing } = await supabase
-    .from("signal_definitions")
-    .select("id")
-    .eq("organization_id", orgId)
-    .limit(1);
-
-  if (existing && existing.length > 0) return;
-
-  const now = new Date().toISOString();
-  const rows = DEFAULT_SIGNAL_DEFINITIONS.map((def, i) => ({
-    id: crypto.randomUUID(),
-    organization_id: orgId,
-    company_id: null,
-    name: def.name,
-    signal_type: def.signal_type,
-    display_name: def.display_name,
-    target_url: def.target_url,
-    search_instructions: def.search_instructions,
-    scope: "global",
-    enabled: true,
-    sort_order: i,
-    created_at: now,
-    updated_at: now,
-  }));
-
-  const { error } = await supabase
-    .from("signal_definitions")
-    .insert(rows);
-
-  if (error) {
-    console.error("[ORG] Failed to seed signal definitions:", error.message);
-  }
-}

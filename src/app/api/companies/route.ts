@@ -1,36 +1,41 @@
 import { NextRequest } from "next/server";
 import { withOrg, type OrgAuthContext } from "@/app/api/_lib/with-auth";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { StoreCompanyRequestSchema } from "@/lib/utils/validation";
+import { AddCompanyRequestSchema } from "@/lib/utils/validation";
 import {
-  storeCompany,
-  getCompanies,
+  addCompanyToPlatform,
+  getTrackedCompanies,
+  trackCompany,
   updateCompanyFromDiscovery,
+  setCompanyPlatformStatus,
 } from "@/services/company-service";
+import { getOrganizationTrackingLimit } from "@/services/organization-service";
+import { runDiscoveryAgent } from "@/services/orchestrator";
 import { createSSEStream } from "@/lib/utils/sse";
 import type { DiscoveryResult } from "@/lib/types";
 
 export const maxDuration = 800;
 
+/**
+ * GET /api/companies — List companies tracked by the org
+ */
 export const GET = withOrg(async (_req: NextRequest, ctx: OrgAuthContext) => {
-  const companies = await getCompanies(ctx.organizationId);
-
-  const supabase = createAdminClient();
-  const { data: org } = await supabase
-    .from("organizations")
-    .select("company_limit")
-    .eq("organization_id", ctx.organizationId)
-    .single();
+  const companies = await getTrackedCompanies(ctx.organizationId);
+  const trackingLimit = await getOrganizationTrackingLimit(ctx.organizationId);
 
   return Response.json({
     companies,
-    company_limit: org?.company_limit ?? 5,
+    tracking_limit: trackingLimit,
   });
 });
 
+/**
+ * POST /api/companies — Add company to platform + track it
+ * If the company already exists on the platform, just track it.
+ * If new, creates it and kicks off background discovery.
+ */
 export const POST = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
   const body = await req.json();
-  const parsed = StoreCompanyRequestSchema.safeParse(body);
+  const parsed = AddCompanyRequestSchema.safeParse(body);
 
   if (!parsed.success) {
     return Response.json(
@@ -41,47 +46,30 @@ export const POST = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
 
   const { website_url, page_title } = parsed.data;
 
-  const supabase = createAdminClient();
-  const { data: org } = await supabase
-    .from("organizations")
-    .select("company_limit")
-    .eq("organization_id", ctx.organizationId)
-    .single();
-
-  const companyLimit = org?.company_limit ?? 5;
-  const currentCompanies = await getCompanies(ctx.organizationId);
-
-  if (currentCompanies.length >= companyLimit) {
-    return Response.json(
-      {
-        error: "Company limit reached",
-        company_limit: companyLimit,
-        current_count: currentCompanies.length,
-      },
-      { status: 403 },
-    );
-  }
-
   const { response, sendEvent, close } = createSSEStream();
 
   (async () => {
     try {
-      const company = await storeCompany(
-        ctx.userId,
+      // 1. Add to platform (or get existing)
+      const { company, already_existed } = await addCompanyToPlatform(
         website_url,
-        ctx.organizationId,
+        ctx.userId,
         page_title,
       );
 
-      await sendEvent({ type: "company_stored", data: company });
+      // 2. Track it for this org (enforces tracking limit)
+      await trackCompany(ctx.organizationId, company.company_id, ctx.userId);
 
+      await sendEvent({ type: "company_stored", data: { ...company, already_existed } });
       await sendEvent({
         type: "pipeline_complete",
-        data: { message: "Company stored", company },
+        data: { message: "Company added and tracked", company },
       });
 
-      // TODO(T6): Wire up actual TinyFish discovery agent call
-      runDiscoveryInBackground(company.company_id, company.website_url);
+      // 3. If new company, run discovery (awaited to keep Vercel function alive)
+      if (!already_existed) {
+        await runDiscoveryInBackground(company.company_id, company.website_url, sendEvent);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       await sendEvent({ type: "pipeline_error", data: { error: message } });
@@ -96,20 +84,38 @@ export const POST = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
 async function runDiscoveryInBackground(
   companyId: string,
   websiteUrl: string,
+  sendEvent: (event: { type: string; data: unknown }) => Promise<void>,
 ): Promise<void> {
   try {
-    console.log(
-      `[Discovery] Starting background enrichment for ${websiteUrl}`,
-    );
+    await setCompanyPlatformStatus(companyId, "enriching");
+    try { await sendEvent({ type: "discovery_started", data: { companyId } }); } catch {}
 
-    // TODO(T6): Replace with actual TinyFish discovery agent call
-    const discoveryResult: DiscoveryResult | null = null;
+    console.log(`[Discovery] Starting background enrichment for ${websiteUrl}`);
+    const result = await runDiscoveryAgent(websiteUrl);
 
-    if (discoveryResult) {
-      await updateCompanyFromDiscovery(companyId, discoveryResult);
-      console.log(`[Discovery] Enriched company ${companyId}`);
+    let enriched = false;
+    if (result && typeof result === "object") {
+      const discoveryResult = result as DiscoveryResult;
+      if (discoveryResult.company_name || discoveryResult.description || discoveryResult.industry) {
+        await updateCompanyFromDiscovery(companyId, discoveryResult);
+        enriched = true;
+        console.log(`[Discovery] Enriched company ${companyId}`);
+      } else {
+        await setCompanyPlatformStatus(companyId, "active");
+        console.log(`[Discovery] No meaningful data returned for ${companyId}`);
+      }
+    } else {
+      await setCompanyPlatformStatus(companyId, "active");
     }
+
+    try { await sendEvent({ type: "discovery_complete", data: { companyId, enriched } }); } catch {}
   } catch (err) {
-    console.error("[Discovery] Background enrichment failed:", err);
+    // Only log if it's a real error, not a stream close
+    if (err instanceof Error && err.message.includes("ResponseAborted")) {
+      console.log(`[Discovery] Stream closed by client (enrichment still completed for ${companyId})`);
+    } else {
+      console.error("[Discovery] Background enrichment failed:", err);
+    }
+    try { await setCompanyPlatformStatus(companyId, "active"); } catch {}
   }
 }

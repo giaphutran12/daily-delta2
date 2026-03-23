@@ -9,7 +9,6 @@ import {
   previewReportEmail,
 } from "@/lib/api/client";
 import {
-  normalizeReportData,
   type Report,
   type Company,
   type ReportData,
@@ -58,12 +57,19 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { MailIcon, TrashIcon, EyeIcon, ChevronDownIcon } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { MailIcon, TrashIcon, EyeIcon } from "lucide-react";
 
 function getAllSignalsSorted(
   rd: ReportData,
 ): Array<ReportSignal & { category: string }> {
-  const normalized = normalizeReportData(rd);
+  const normalized = (rd);
   const all: Array<ReportSignal & { category: string }> = [];
   for (const section of normalized.sections) {
     for (const item of section.items) {
@@ -147,7 +153,7 @@ function ReportDetailCard({
   report: Report;
   companyName: string;
 }) {
-  const rd = normalizeReportData(report.report_data);
+  const rd = (report.report_data);
   const hasAi = !!rd.ai_summary;
   const aiLabel =
     rd.ai_summary_type === "business_intelligence"
@@ -183,10 +189,10 @@ function ReportDetailCard({
               </p>
             ) : (
               <Accordion>
-                {rd.sections.map((section) => (
+                {rd.sections.map((section, idx) => (
                   <AccordionItem
-                    key={`${section.signal_type}-${section.display_name}`}
-                    value={`${section.signal_type}-${section.display_name}`}
+                    key={`${section.signal_type}-${section.display_name}-${idx}`}
+                    value={`${section.signal_type}-${section.display_name}-${idx}`}
                   >
                     <AccordionTrigger>
                       <span className="flex items-center gap-2">
@@ -417,7 +423,7 @@ export default function ReportsPage() {
             </TableHeader>
             <TableBody>
               {filteredReports.map((report) => {
-                const rd = normalizeReportData(report.report_data);
+                const rd = (report.report_data);
                 const totalSignals = rd.sections.reduce(
                   (s, sec) => s + sec.items.length,
                   0,
@@ -501,10 +507,6 @@ export default function ReportsPage() {
                            >
                              <TrashIcon className="h-4 w-4" />
                            </Button>
-                           <ChevronDownIcon
-                             aria-hidden
-                             className={`h-4 w-4 text-muted-foreground transition-transform ${isSelected ? "rotate-180" : ""}`}
-                           />
                          </div>
                          {emailErrorId === report.report_id && (
                            <span className="text-xs text-red-600">
@@ -526,12 +528,35 @@ export default function ReportsPage() {
         </Card>
       )}
 
-      {selectedReport && (
-        <ReportDetailCard
-          report={selectedReport}
-          companyName={getCompanyName(selectedReport.company_id)}
-        />
-      )}
+      <Sheet
+        open={!!selectedReportId}
+        onOpenChange={(open) => {
+          if (!open) setSelectedReportId(null);
+        }}
+      >
+        <SheetContent side="right" className="sm:max-w-[70vw] overflow-y-auto">
+          {selectedReport && (
+            <>
+              <SheetHeader>
+                <SheetTitle>
+                  {getCompanyName(selectedReport.company_id)} — {formatDate(selectedReport.generated_at)}
+                </SheetTitle>
+                <SheetDescription>
+                  <Badge variant="outline">
+                    {selectedReport.trigger === "cron" ? "Scheduled" : "Manual"}
+                  </Badge>
+                </SheetDescription>
+              </SheetHeader>
+              <div className="px-4 pb-4">
+                <ReportDetailCard
+                  report={selectedReport}
+                  companyName={getCompanyName(selectedReport.company_id)}
+                />
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
 
       <AlertDialog
         open={!!deleteDialogId}

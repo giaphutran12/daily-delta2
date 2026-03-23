@@ -102,39 +102,6 @@ export async function getUserSettings(userId: string): Promise<{
   };
 }
 
-export async function getAllUsers(): Promise<
-  Array<{ user_id: string; email: string; email_frequency: EmailFrequency }>
-> {
-  const supabase = createAdminClient();
-
-  const { data, error } = await supabase
-    .from("users")
-    .select("user_id, email, email_frequency");
-
-  if (error) throw new Error(`Failed to get all users: ${error.message}`);
-
-  return (data ?? []).map((r) => ({
-    user_id: r.user_id,
-    email: r.email,
-    email_frequency: (r.email_frequency as EmailFrequency) ?? "daily",
-  }));
-}
-
-export async function getUserByEmail(
-  email: string,
-): Promise<User | null> {
-  const supabase = createAdminClient();
-
-  const { data } = await supabase
-    .from("users")
-    .select("user_id, email, created_at")
-    .eq("email", email)
-    .maybeSingle();
-
-  if (!data) return null;
-  return rowToUser(data);
-}
-
 function rowToUser(row: {
   user_id: string;
   email: string;

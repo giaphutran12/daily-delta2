@@ -176,6 +176,29 @@ For each competitor, extract:
 CRITICAL: The website_url for each competitor MUST be a real, valid URL you found during research. Do not guess or fabricate URLs. Only include genuine, direct competitors — not tangentially related companies.`,
   },
   {
+    name: "TC Signal",
+    signal_type: "tc_signal",
+    display_name: "TC Signal",
+    target_url: "https://techcrunch.com",
+    search_instructions: `Search TechCrunch for articles directly about {company_name}.
+
+STEP 1 — Search for "{company_name}" on TechCrunch. Look through the results.
+STEP 2 — Search for "{company_name} funding" and "{company_name} acquisition" on TechCrunch.
+STEP 3 — Search for direct competitors of {company_name} by name on TechCrunch (only competitors you are confident about).
+
+Only include articles that:
+- Directly mention {company_name} by name in the title or first paragraph
+- Are about a direct, named competitor's funding round, acquisition, or major product launch
+- Cover an event that would materially affect {company_name}'s market position
+
+DO NOT include:
+- General industry trend articles that don't mention {company_name}
+- Articles about companies that are only loosely related by industry
+- Opinion pieces or predictions that don't involve specific companies
+
+For each signal found, extract: title, 1-2 sentence summary explaining why it matters for {company_name}, source (TechCrunch), URL, and date.`,
+  },
+  {
     name: "Fundraising Detector",
     signal_type: "fundraising_signal",
     display_name: "Fundraising Signals",

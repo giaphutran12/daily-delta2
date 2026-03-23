@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { withOrg, OrgAuthContext } from "@/app/api/_lib/with-auth";
 import { getReportById } from "@/services/report-service";
 import { sendReportEmail } from "@/services/email-service";
+import { isTracking } from "@/services/company-service";
 import { getUserSettings } from "@/services/user-service";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -19,11 +20,9 @@ export const POST = withOrg(
         return Response.json({ error: "Report not found" }, { status: 404 });
       }
 
-      if (report.organization_id !== ctx.organizationId) {
-        return Response.json(
-          { error: "Report does not belong to this organization" },
-          { status: 403 },
-        );
+      const tracking = await isTracking(ctx.organizationId, report.company_id);
+      if (!tracking) {
+        return Response.json({ error: "Report not found" }, { status: 404 });
       }
 
       const settings = await getUserSettings(ctx.userId);
