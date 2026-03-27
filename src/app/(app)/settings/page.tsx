@@ -123,6 +123,9 @@ export default function SettingsPage() {
     setEmailSuccess(null);
     try {
       await setEmail(deliveryEmail.trim());
+      const settings = await getUserSettings();
+      setDeliveryEmail(settings.email ?? deliveryEmail.trim());
+      setFrequencyState(settings.email_frequency ?? frequency);
       setEmailSuccess("Delivery email updated successfully.");
     } catch (err) {
       setEmailError((err as Error).message ?? "Failed to update email.");
@@ -136,6 +139,8 @@ export default function SettingsPage() {
     setFrequencyState(freq);
     try {
       await setEmailFrequency(freq);
+      const settings = await getUserSettings();
+      setFrequencyState(settings.email_frequency ?? freq);
     } catch {
       setFrequencyState(previous);
     }
@@ -237,7 +242,7 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle className="text-base">Report Email</CardTitle>
               <CardDescription>
-                Intelligence reports will be sent to your account email.
+                Intelligence reports will be sent to your chosen delivery email.
               </CardDescription>
             </CardHeader>
             <CardContent>

@@ -714,8 +714,7 @@ export async function sendInviteEmail(
 
     const fromEmail =
       process.env.RESEND_FROM_EMAIL || "dailydelta@tinyfish.ai";
-    const frontendUrl =
-      process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const frontendUrl = resolveAppBaseUrl();
     const acceptUrl = `${frontendUrl}/invite/accept?token=${acceptToken}`;
 
     const html = `
@@ -787,4 +786,26 @@ export async function sendInviteEmail(
     console.error(`[Email] Failed to send invite:`, err);
     return false;
   }
+}
+
+function resolveAppBaseUrl(): string {
+  const configuredUrl =
+    process.env.NEXT_PUBLIC_APP_URL ?? process.env.APP_URL;
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/$/, "");
+  }
+
+  const vercelUrl =
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+  if (vercelUrl) {
+    return `https://${vercelUrl}`.replace(/\/$/, "");
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return "http://localhost:3000";
+  }
+
+  throw new Error(
+    "NEXT_PUBLIC_APP_URL (or APP_URL / VERCEL_URL) must be configured in production",
+  );
 }

@@ -16,18 +16,10 @@ export function CompanyChat({
   companyName: string;
 }) {
   const [isOpen, setIsOpen] = useState(false);
-  const [initialMessages, setInitialMessages] = useState<UIMessage[] | undefined>(undefined);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Load persisted messages on mount
-  useEffect(() => {
-    getChatMessages(companyId)
-      .then(({ messages }) => setInitialMessages(messages as UIMessage[]))
-      .catch(() => setInitialMessages([]))
-      .finally(() => setLoadingHistory(false));
-  }, [companyId]);
 
   const chat = useChat({
     id: `chat-${companyId}`,
@@ -35,11 +27,39 @@ export function CompanyChat({
       api: `/api/chat/${companyId}`,
       headers: async () => await getAuthHeaders(),
     }),
-    messages: initialMessages,
+    messages: [],
   });
 
-  const { messages, sendMessage, status } = chat;
+  const { error, messages, sendMessage, setMessages, status } = chat;
   const isStreaming = status === "streaming" || status === "submitted";
+
+  // Load persisted messages on mount
+  useEffect(() => {
+    let isActive = true;
+
+    setLoadingHistory(true);
+    setHistoryError(null);
+
+    getChatMessages(companyId)
+      .then(({ messages }) => {
+        if (!isActive) return;
+        setMessages(messages as UIMessage[]);
+      })
+      .catch((err) => {
+        if (!isActive) return;
+        setMessages([]);
+        setHistoryError(
+          err instanceof Error ? err.message : "Failed to load chat history.",
+        );
+      })
+      .finally(() => {
+        if (isActive) setLoadingHistory(false);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, [companyId, setMessages]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -99,6 +119,12 @@ export function CompanyChat({
           ref={scrollRef}
           className="flex-1 overflow-y-auto px-4 py-3 space-y-3"
         >
+          {(historyError || error) && (
+            <div className="rounded-xl border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {historyError ?? error?.message ?? "Chat request failed."}
+            </div>
+          )}
+
           {loadingHistory ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
