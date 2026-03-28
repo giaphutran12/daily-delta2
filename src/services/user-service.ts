@@ -34,25 +34,28 @@ export async function ensureUser(
   return rowToUser(inserted);
 }
 
+/**
+ * Set the custom report delivery email for a user.
+ * This writes to `delivery_email` — a separate column from `email`.
+ * `users.email` is the identity email and is never changed here.
+ */
 export async function setUserEmail(
   userId: string,
-  email: string,
-  emailFrequency?: EmailFrequency,
+  deliveryEmail: string,
+  identityEmail?: string,
 ): Promise<User> {
   const supabase = createAdminClient();
-  await ensureUser(userId, email);
 
-  const updates: Record<string, unknown> = { email };
-  if (emailFrequency) updates.email_frequency = emailFrequency;
+  await ensureUser(userId, identityEmail ?? deliveryEmail);
 
   const { data, error } = await supabase
     .from("users")
-    .update(updates)
+    .update({ delivery_email: deliveryEmail })
     .eq("user_id", userId)
     .select("user_id, email, created_at")
     .single();
 
-  if (error) throw new Error(`Failed to update email: ${error.message}`);
+  if (error) throw new Error(`Failed to update delivery email: ${error.message}`);
   return rowToUser(data);
 }
 
@@ -70,6 +73,10 @@ export async function setEmailFrequency(
   if (error) throw new Error(`Failed to update frequency: ${error.message}`);
 }
 
+/**
+ * Return the best available email address to use for pipeline report delivery.
+ * Priority: delivery_email (custom) -> email (identity / auth email).
+ */
 export async function getUserEmail(
   userId: string,
 ): Promise<string | null> {
@@ -77,13 +84,19 @@ export async function getUserEmail(
 
   const { data } = await supabase
     .from("users")
-    .select("email")
+    .select("email, delivery_email")
     .eq("user_id", userId)
     .maybeSingle();
 
-  return data?.email ?? null;
+  if (!data) return null;
+  return (data.delivery_email as string | null) ?? data.email ?? null;
 }
 
+/**
+ * Return the user's current settings.
+ * `email` in the response is the DELIVERY email — the custom override if set,
+ * otherwise null (frontend falls back to auth session email).
+ */
 export async function getUserSettings(userId: string): Promise<{
   email: string | null;
   email_frequency: EmailFrequency;
@@ -92,12 +105,12 @@ export async function getUserSettings(userId: string): Promise<{
 
   const { data } = await supabase
     .from("users")
-    .select("email, email_frequency")
+    .select("delivery_email, email_frequency")
     .eq("user_id", userId)
     .maybeSingle();
 
   return {
-    email: data?.email ?? null,
+    email: (data?.delivery_email as string | null) ?? null,
     email_frequency: (data?.email_frequency as EmailFrequency) ?? "daily",
   };
 }

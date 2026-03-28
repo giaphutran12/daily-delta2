@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -36,7 +36,7 @@ function normalizeRedirectTarget(value: string | null): string | null {
   return value;
 }
 
-export default function SignUpPage() {
+function SignUpForm() {
   const { signUp } = useAuth();
   const searchParams = useSearchParams();
   const [serverError, setServerError] = useState("");
@@ -176,5 +176,19 @@ export default function SignUpPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <SignUpForm />
+    </Suspense>
   );
 }

@@ -54,12 +54,7 @@ export const POST = withAuth(async (req: NextRequest, ctx: AuthContext) => {
         return Response.json({ error: "Valid email is required" }, { status: 400 });
       }
 
-      const freq =
-        body.email_frequency && VALID_FREQUENCIES.includes(body.email_frequency)
-          ? body.email_frequency
-          : undefined;
-
-      const user = await setUserEmail(ctx.userId, parsed.data.email, freq);
+      const user = await setUserEmail(ctx.userId, parsed.data.email, ctx.userEmail);
       return Response.json({ success: true, user });
     }
 

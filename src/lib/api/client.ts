@@ -376,14 +376,11 @@ export async function getUserSettings(): Promise<UserSettings> {
   return res.json();
 }
 
-export async function setEmail(
-  email: string,
-  frequency?: EmailFrequency,
-): Promise<void> {
+export async function setEmail(email: string): Promise<void> {
   const res = await authFetch(`${API_BASE}/user-settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, email_frequency: frequency }),
+    body: JSON.stringify({ email }),
   });
   await requireOk(res, "Failed to update delivery email");
 }

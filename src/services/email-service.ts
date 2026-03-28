@@ -806,6 +806,6 @@ function resolveAppBaseUrl(): string {
   }
 
   throw new Error(
-    "NEXT_PUBLIC_APP_URL (or APP_URL / VERCEL_URL) must be configured in production",
+    "NEXT_PUBLIC_APP_URL (or APP_URL / VERCEL_PROJECT_PRODUCTION_URL) must be configured in production",
   );
 }
