@@ -702,18 +702,24 @@ export async function sendDigestEmail(
 }
 
 /**
- * Resolve the canonical app URL for server-side use (e.g. email links).
+ * Resolve the canonical PRODUCTION app URL for server-side use (email links, callbacks).
+ *
+ * IMPORTANT: We must NEVER use VERCEL_URL here. On preview deployments VERCEL_URL
+ * returns the preview-specific URL (e.g. daily-delta2-git-feat-xxx.vercel.app)
+ * which is gated by Vercel Deployment Protection — external users hit a Vercel
+ * login wall instead of the app.
+ *
  * Priority:
- *  1. NEXT_PUBLIC_APP_URL  — explicit override if set
- *  2. VERCEL_URL           — auto-set by Vercel per-deployment
- *  3. Hardcoded production URL
+ *  1. NEXT_PUBLIC_APP_URL              — explicit override (custom domain, etc.)
+ *  2. VERCEL_PROJECT_PRODUCTION_URL    — auto-set by Vercel to the production domain
+ *  3. Hardcoded production URL         — last resort
  */
 function getAppUrl(): string {
   if (process.env.NEXT_PUBLIC_APP_URL) {
     return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
   }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   }
   return "https://daily-delta2.vercel.app";
 }
