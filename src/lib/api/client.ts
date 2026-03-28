@@ -297,11 +297,15 @@ export async function getUserSettings(): Promise<UserSettings> {
 }
 
 export async function setEmail(email: string): Promise<void> {
-  await authFetch(`${API_BASE}/user-settings`, {
+  const res = await authFetch(`${API_BASE}/user-settings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? "Failed to update email");
+  }
 }
 
 // ---------------------------------------------------------------------------

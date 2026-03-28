@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,11 +23,16 @@ const loginSchema = z.object({
 
 type LoginForm = z.infer<typeof loginSchema>;
 
-export default function LoginPage() {
+function LoginForm() {
   const { signIn } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [serverError, setServerError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Only allow same-origin redirects to prevent open-redirect attacks
+  const rawRedirect = searchParams.get("redirect") ?? "";
+  const safeRedirect = rawRedirect.startsWith("/") ? rawRedirect : "/";
 
   const {
     register,
@@ -46,7 +51,7 @@ export default function LoginPage() {
       setLoading(false);
     } else {
       toast.success("Signed in successfully");
-      router.push("/");
+      router.push(safeRedirect);
     }
   };
 
@@ -119,5 +124,17 @@ export default function LoginPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }

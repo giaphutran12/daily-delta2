@@ -32,7 +32,7 @@ function AcceptInviteContent() {
     }
 
     if (!user) {
-      router.push(`/login?redirect=/invite/accept?token=${token}`);
+      router.push(`/login?redirect=${encodeURIComponent(`/invite/accept?token=${token}`)}`);
       return;
     }
 

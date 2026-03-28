@@ -236,22 +236,23 @@ export default function CompaniesPage() {
             <Plus className="h-4 w-4" />
             Add Company
           </DialogTrigger>
-          <DialogContent className="sm:max-w-lg">
-            <DialogHeader>
+          <DialogContent className="flex flex-col sm:max-w-lg max-h-[90vh] p-0 gap-0 overflow-hidden">
+            <DialogHeader className="px-5 pt-5 pb-0 shrink-0">
               <DialogTitle>Add Company</DialogTitle>
             </DialogHeader>
 
-            <div className="flex gap-2 border-b pb-2">
+            {/* Mode tabs */}
+            <div className="flex gap-1 px-5 pt-3 pb-0 border-b shrink-0">
               <button
                 type="button"
-                className={`text-sm px-3 py-1 rounded-md transition-colors ${addMode === "search" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                className={`text-sm px-3 py-1.5 rounded-t-md transition-colors border-b-2 -mb-px ${addMode === "search" ? "border-primary text-foreground font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 onClick={() => setAddMode("search")}
               >
                 Search Catalog
               </button>
               <button
                 type="button"
-                className={`text-sm px-3 py-1 rounded-md transition-colors ${addMode === "url" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+                className={`text-sm px-3 py-1.5 rounded-t-md transition-colors border-b-2 -mb-px ${addMode === "url" ? "border-primary text-foreground font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
                 onClick={() => setAddMode("url")}
               >
                 Add by URL
@@ -259,89 +260,88 @@ export default function CompaniesPage() {
             </div>
 
             {addMode === "search" ? (
-              <div className="flex flex-col gap-3 py-2">
-                <Input
-                  placeholder="Filter companies..."
-                  value={catalogFilter}
-                  onChange={(e) => setCatalogFilter(e.target.value)}
-                  disabled={addStoring}
-                  autoFocus
-                />
+              <div className="flex flex-col min-h-0 flex-1">
+                {/* Sticky search */}
+                <div className="px-5 pt-4 pb-2 shrink-0">
+                  <Input
+                    placeholder="Filter companies..."
+                    value={catalogFilter}
+                    onChange={(e) => setCatalogFilter(e.target.value)}
+                    disabled={addStoring}
+                    autoFocus
+                  />
+                </div>
 
-                {catalogLoading ? (
-                  <div className="flex flex-col gap-1.5">
-                    {[1, 2, 3].map((k) => (
-                      <Skeleton key={k} className="h-12 w-full" />
-                    ))}
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xs text-muted-foreground">
-                      Showing {displayedCatalog.length} of {catalogTotal} companies
-                      {catalogFilter.trim() ? ` matching "${catalogFilter.trim()}"` : " in catalog"}
-                    </p>
-
-                    <div className="flex flex-col gap-1 max-h-[360px] overflow-y-auto">
-                      {displayedCatalog.length === 0 ? (
-                        <p className="text-xs text-muted-foreground text-center py-6">
-                          {catalogFilter.trim()
-                            ? <>No companies match &ldquo;{catalogFilter.trim()}&rdquo;. Try &ldquo;Add by URL&rdquo; to add a new company.</>
-                            : "No companies in catalog yet."
-                          }
-                        </p>
-                      ) : (
-                        displayedCatalog.map((c) => (
-                          <div
-                            key={c.company_id}
-                            className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 hover:bg-muted/50 transition-colors"
-                          >
-                            <div className="flex flex-col min-w-0">
-                              <span className="text-sm font-medium truncate">{c.company_name}</span>
-                              <span className="text-xs text-muted-foreground truncate">
-                                {c.domain}
-                                {c.industry ? ` · ${c.industry}` : ""}
-                              </span>
-                            </div>
-                            {isAlreadyTracking(c.company_id) ? (
-                              <span className="text-xs text-muted-foreground shrink-0">Tracking</span>
-                            ) : (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="shrink-0"
-                                disabled={addStoring}
-                                onClick={() => handleTrackFromCatalog(c.website_url)}
-                              >
-                                Track
-                              </Button>
-                            )}
-                          </div>
-                        ))
-                      )}
+                {/* Scrollable list */}
+                <div className="flex-1 overflow-y-auto px-5 min-h-0">
+                  {catalogLoading ? (
+                    <div className="flex flex-col gap-2 py-2">
+                      {[1, 2, 3, 4, 5].map((k) => (
+                        <Skeleton key={k} className="h-12 w-full rounded-md" />
+                      ))}
                     </div>
-
-                    {filteredCatalog.length > CATALOG_DISPLAY_LIMIT && (
+                  ) : displayedCatalog.length === 0 ? (
+                    <div className="flex items-center justify-center py-10">
                       <p className="text-xs text-muted-foreground text-center">
-                        {filteredCatalog.length - CATALOG_DISPLAY_LIMIT} more — refine your search to see them
+                        {catalogFilter.trim()
+                          ? <>No companies match &ldquo;{catalogFilter.trim()}&rdquo;.<br />Switch to &ldquo;Add by URL&rdquo; to add a new one.</>
+                          : "No companies in catalog yet."
+                        }
                       </p>
-                    )}
-                  </>
-                )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1.5 py-2">
+                      {displayedCatalog.map((c) => (
+                        <div
+                          key={c.company_id}
+                          className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 hover:bg-muted/50 transition-colors"
+                        >
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="text-sm font-medium truncate leading-snug">{c.company_name}</span>
+                            <span className="text-xs text-muted-foreground truncate mt-0.5">
+                              {c.domain}
+                              {c.industry ? ` · ${c.industry}` : ""}
+                            </span>
+                          </div>
+                          {isAlreadyTracking(c.company_id) ? (
+                            <span className="text-xs text-muted-foreground shrink-0 px-2">Tracking</span>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="shrink-0"
+                              disabled={addStoring}
+                              onClick={() => handleTrackFromCatalog(c.website_url)}
+                            >
+                              Track
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
 
-                {addMsg && (
-                  <p
-                    className={
-                      addMsg.startsWith("Error")
-                        ? "text-xs text-destructive"
-                        : "text-xs text-muted-foreground"
+                {/* Sticky footer */}
+                <div className="px-5 py-3 border-t bg-muted/30 shrink-0 flex items-center justify-between gap-2">
+                  <p className="text-xs text-muted-foreground">
+                    {catalogLoading
+                      ? "Loading catalog…"
+                      : `Showing ${displayedCatalog.length} of ${catalogTotal} companies${catalogFilter.trim() ? ` matching "${catalogFilter.trim()}"` : ""}`
                     }
-                  >
-                    {addMsg}
+                    {!catalogLoading && filteredCatalog.length > CATALOG_DISPLAY_LIMIT && (
+                      <> &mdash; {filteredCatalog.length - CATALOG_DISPLAY_LIMIT} more, refine to see them</>
+                    )}
                   </p>
-                )}
+                  {addMsg && (
+                    <p className={`text-xs shrink-0 ${addMsg.startsWith("Error") ? "text-destructive" : "text-muted-foreground"}`}>
+                      {addMsg}
+                    </p>
+                  )}
+                </div>
               </div>
             ) : (
-              <form onSubmit={handleAddByUrl} className="flex flex-col gap-4 py-2">
+              <form onSubmit={handleAddByUrl} className="flex flex-col gap-4 px-5 py-4">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="company-url">Website URL</Label>
                   <Input
@@ -350,25 +350,20 @@ export default function CompaniesPage() {
                     value={addUrl}
                     onChange={(e) => setAddUrl(e.target.value)}
                     disabled={addStoring}
+                    autoFocus
                   />
                   <p className="text-xs text-muted-foreground">
-                    If this company isn&apos;t in our database, it will be added automatically.
+                    If this company isn&apos;t in our database, it will be added and enriched automatically.
                   </p>
                 </div>
 
                 {addMsg && (
-                  <p
-                    className={
-                      addMsg.startsWith("Error")
-                        ? "text-xs text-destructive"
-                        : "text-xs text-muted-foreground"
-                    }
-                  >
+                  <p className={addMsg.startsWith("Error") ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
                     {addMsg}
                   </p>
                 )}
 
-                <DialogFooter>
+                <DialogFooter className="pt-2">
                   <Button
                     type="button"
                     variant="outline"

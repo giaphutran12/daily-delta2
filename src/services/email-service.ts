@@ -701,6 +701,23 @@ export async function sendDigestEmail(
   }
 }
 
+/**
+ * Resolve the canonical app URL for server-side use (e.g. email links).
+ * Priority:
+ *  1. NEXT_PUBLIC_APP_URL  — explicit override if set
+ *  2. VERCEL_URL           — auto-set by Vercel per-deployment
+ *  3. Hardcoded production URL
+ */
+function getAppUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return "https://daily-delta2.vercel.app";
+}
+
 export async function sendInviteEmail(
   toEmail: string,
   orgName: string,
@@ -714,9 +731,7 @@ export async function sendInviteEmail(
 
     const fromEmail =
       process.env.RESEND_FROM_EMAIL || "dailydelta@tinyfish.ai";
-    const frontendUrl =
-      process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const acceptUrl = `${frontendUrl}/invite/accept?token=${acceptToken}`;
+    const acceptUrl = `${getAppUrl()}/invite/accept?token=${acceptToken}`;
 
     const html = `
     <!DOCTYPE html>
