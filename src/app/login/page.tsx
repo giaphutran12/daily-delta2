@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,11 +23,25 @@ const loginSchema = z.object({
 
 type LoginForm = z.infer<typeof loginSchema>;
 
+function normalizeRedirectTarget(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/";
+  }
+
+  return value;
+}
+
 export default function LoginPage() {
   const { signIn } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [serverError, setServerError] = useState("");
   const [loading, setLoading] = useState(false);
+  const redirectTarget = normalizeRedirectTarget(searchParams.get("redirect"));
+  const signUpHref =
+    redirectTarget === "/"
+      ? "/signup"
+      : `/signup?redirect=${encodeURIComponent(redirectTarget)}`;
 
   const {
     register,
@@ -46,7 +60,7 @@ export default function LoginPage() {
       setLoading(false);
     } else {
       toast.success("Signed in successfully");
-      router.push("/");
+      router.push(redirectTarget);
     }
   };
 
@@ -54,7 +68,13 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="flex justify-center mb-6">
-          <Image src="/logo.png" alt="Daily Delta" width={48} height={48} />
+          <Image
+            src="/logo.png"
+            alt="Daily Delta"
+            width={48}
+            height={48}
+            className="size-12"
+          />
         </div>
         <Card>
           <CardHeader className="text-center">
@@ -69,6 +89,7 @@ export default function LoginPage() {
                   id="email"
                   type="email"
                   placeholder="you@example.com"
+                  autoComplete="email"
                   {...register("email")}
                   aria-invalid={!!errors.email}
                 />
@@ -83,6 +104,7 @@ export default function LoginPage() {
                   id="password"
                   type="password"
                   placeholder="Enter your password"
+                  autoComplete="current-password"
                   {...register("password")}
                   aria-invalid={!!errors.password}
                 />
@@ -111,7 +133,7 @@ export default function LoginPage() {
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
               Don&apos;t have an account?{" "}
-              <Link href="/signup" className="text-primary font-medium hover:underline">
+              <Link href={signUpHref} className="text-primary font-medium hover:underline">
                 Create one
               </Link>
             </p>
