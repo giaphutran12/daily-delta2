@@ -54,3 +54,9 @@ export const SetEmailRequestSchema = z.object({
 });
 
 export type SetEmailRequest = z.infer<typeof SetEmailRequestSchema>;
+
+export const SetEmailFrequencyRequestSchema = z.object({
+  frequency: z.enum(['daily', 'every_3_days', 'weekly', 'monthly']),
+});
+
+export type SetEmailFrequencyRequest = z.infer<typeof SetEmailFrequencyRequestSchema>;

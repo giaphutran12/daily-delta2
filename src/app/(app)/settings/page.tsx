@@ -4,11 +4,13 @@ import { useState, useEffect } from "react";
 import {
   getUserSettings,
   setEmail,
+  setEmailFrequency,
   getOrgMembers,
   inviteMember,
   removeMember,
   cancelInvitation,
   createOrganization,
+  type EmailFrequency,
 } from "@/lib/api/client";
 import type { OrganizationMember } from "@/lib/types";
 import { useAuth } from "@/lib/auth/AuthContext";
@@ -66,10 +68,22 @@ const ROLE_LABELS: Record<string, string> = {
   member: "Member",
 };
 
+const FREQUENCY_OPTIONS: Array<{
+  value: EmailFrequency;
+  label: string;
+  desc: string;
+}> = [
+  { value: "daily", label: "Daily", desc: "Every day" },
+  { value: "every_3_days", label: "Every 3 days", desc: "Once every 3 days" },
+  { value: "weekly", label: "Weekly", desc: "Once a week" },
+  { value: "monthly", label: "Monthly", desc: "Once a month" },
+];
+
 export default function SettingsPage() {
   const { user, currentOrg, organizations, setCurrentOrg, refreshOrgs } =
     useAuth();
 
+  const [frequency, setFrequencyState] = useState<EmailFrequency>("daily");
   const [deliveryEmail, setDeliveryEmail] = useState("");
   const [isSavingEmail, setIsSavingEmail] = useState(false);
   const [emailError, setEmailError] = useState<string | null>(null);
@@ -97,6 +111,7 @@ export default function SettingsPage() {
       .then((s) => {
         if (s.email) setDeliveryEmail(s.email);
         else if (user?.email) setDeliveryEmail(user.email);
+        setFrequencyState(s.email_frequency ?? "daily");
       })
       .catch(() => {});
   }, [user?.email]);
@@ -108,11 +123,26 @@ export default function SettingsPage() {
     setEmailSuccess(null);
     try {
       await setEmail(deliveryEmail.trim());
+      const settings = await getUserSettings();
+      setDeliveryEmail(settings.email ?? deliveryEmail.trim());
+      setFrequencyState(settings.email_frequency ?? frequency);
       setEmailSuccess("Delivery email updated successfully.");
     } catch (err) {
       setEmailError((err as Error).message ?? "Failed to update email.");
     } finally {
       setIsSavingEmail(false);
+    }
+  };
+
+  const handleFrequencyChange = async (freq: EmailFrequency) => {
+    const previous = frequency;
+    setFrequencyState(freq);
+    try {
+      await setEmailFrequency(freq);
+      const settings = await getUserSettings();
+      setFrequencyState(settings.email_frequency ?? freq);
+    } catch {
+      setFrequencyState(previous);
     }
   };
 
@@ -212,7 +242,7 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle className="text-base">Report Email</CardTitle>
               <CardDescription>
-                Intelligence reports will be sent to your account email.
+                Intelligence reports will be sent to your chosen delivery email.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -240,6 +270,32 @@ export default function SettingsPage() {
                 )}
                 <p className="text-xs text-muted-foreground">
                   Reports will be sent to this email address.
+                </p>
+              </div>
+              <div className="mt-6 max-w-sm space-y-2">
+                <Label htmlFor="email-frequency">Email Frequency</Label>
+                <Select
+                  value={frequency}
+                  onValueChange={(value) =>
+                    void handleFrequencyChange(value as EmailFrequency)
+                  }
+                >
+                  <SelectTrigger id="email-frequency">
+                    <SelectValue placeholder="Select delivery frequency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FREQUENCY_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {
+                    FREQUENCY_OPTIONS.find((option) => option.value === frequency)
+                      ?.desc
+                  }
                 </p>
               </div>
             </CardContent>

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "qa:tinyfish": "node scripts/run-tinyfish-qa.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.63",
@@ -22,6 +23,7 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
+    "inngest": "^4.1.0",
     "input-otp": "^1.4.2",
     "jose": "^6.2.1",
     "lucide-react": "^0.577.0",

@@ -1,0 +1,106 @@
+[
+  {
+    "id": "login-desktop",
+    "path": "/login",
+    "auth": "guest",
+    "viewport": "desktop",
+    "title": "Login page renders and accepts credentials",
+    "instructions": "Verify the login form renders cleanly, important controls are visible, and the page has no obvious layout breakage."
+  },
+  {
+    "id": "companies-list-desktop",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Tracked companies list renders",
+    "instructions": "Verify the tracked companies page loads after login, the primary table/list renders, and no major UI breakage or empty-state bugs appear unexpectedly."
+  },
+  {
+    "id": "company-detail-desktop",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Company detail page renders",
+    "instructions": "Open one tracked company and verify the detail page loads with the timeline, signals, and chat trigger visible."
+  },
+  {
+    "id": "competitor-timeline-desktop",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Competitor timeline toggle behaves correctly",
+    "instructions": "Open one tracked company, locate the competitor timeline UI, and verify compare mode can be reached without visual or interaction bugs."
+  },
+  {
+    "id": "settings-email-persistence",
+    "path": "/settings",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Delivery email save persists after navigation",
+    "instructions": "Change the delivery email to a clearly different valid value, save it, navigate away and back, and verify whether the saved value persists."
+  },
+  {
+    "id": "settings-frequency-persistence",
+    "path": "/settings",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Email frequency save persists after navigation",
+    "instructions": "Change the email frequency, save if needed, navigate away and back, and verify whether the chosen frequency persists."
+  },
+  {
+    "id": "invite-creation-ui",
+    "path": "/settings",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Invite member UI works",
+    "instructions": "Navigate to organization settings and verify the invite-member form renders, can be interacted with, and does not show layout or validation bugs before submission."
+  },
+  {
+    "id": "invite-accept-page",
+    "path": "/invite/accept?token=invalid-token",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Invite accept page handles invalid token cleanly",
+    "instructions": "Load the invite accept page with the provided token in the URL and verify the page handles the invalid or missing invite state without broken UI."
+  },
+  {
+    "id": "reports-page-desktop",
+    "path": "/reports",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Reports page renders and filters cleanly",
+    "instructions": "Verify the reports page renders, key controls are visible, and report selection/filter controls do not show obvious UI regressions."
+  },
+  {
+    "id": "chat-open-state",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Company chat open state renders correctly",
+    "instructions": "Open a tracked company, expand the chat interface, and verify the panel opens cleanly without clipping, overlap, or broken controls."
+  },
+  {
+    "id": "chat-send-respond",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Company chat can send one message and receive one response",
+    "instructions": "Open a tracked company, send exactly one simple question in chat, wait for the assistant response, and report whether the chat flow succeeds or breaks."
+  },
+  {
+    "id": "mobile-layout-sanity",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "mobile",
+    "title": "Mobile layout sanity on companies flow",
+    "instructions": "Test the authenticated companies flow in a mobile viewport and report layout overflow, clipped content, unusable controls, or other mobile-specific UX bugs."
+  },
+  {
+    "id": "broken-images-icons",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Broken images and icon regressions",
+    "instructions": "Scan the authenticated app surfaces you touch in this scenario for broken images, missing icons, or obviously failed asset loads."
+  }
+]

@@ -1,6 +1,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { User } from "@/lib/types";
 
+export type EmailFrequency =
+  | "daily"
+  | "every_3_days"
+  | "weekly"
+  | "monthly";
+
 export async function ensureUser(
   userId: string,
   email: string,
@@ -36,11 +42,11 @@ export async function ensureUser(
 export async function setUserEmail(
   userId: string,
   deliveryEmail: string,
+  identityEmail?: string,
 ): Promise<User> {
   const supabase = createAdminClient();
 
-  // Ensure the user row exists before trying to update it
-  await ensureUser(userId, deliveryEmail);
+  await ensureUser(userId, identityEmail ?? deliveryEmail);
 
   const { data, error } = await supabase
     .from("users")
@@ -53,9 +59,23 @@ export async function setUserEmail(
   return rowToUser(data);
 }
 
+export async function setEmailFrequency(
+  userId: string,
+  frequency: EmailFrequency,
+): Promise<void> {
+  const supabase = createAdminClient();
+
+  const { error } = await supabase
+    .from("users")
+    .update({ email_frequency: frequency })
+    .eq("user_id", userId);
+
+  if (error) throw new Error(`Failed to update frequency: ${error.message}`);
+}
+
 /**
  * Return the best available email address to use for pipeline report delivery.
- * Priority: delivery_email (custom) → email (identity / auth email).
+ * Priority: delivery_email (custom) -> email (identity / auth email).
  */
 export async function getUserEmail(
   userId: string,
@@ -79,17 +99,19 @@ export async function getUserEmail(
  */
 export async function getUserSettings(userId: string): Promise<{
   email: string | null;
+  email_frequency: EmailFrequency;
 }> {
   const supabase = createAdminClient();
 
   const { data } = await supabase
     .from("users")
-    .select("delivery_email")
+    .select("delivery_email, email_frequency")
     .eq("user_id", userId)
     .maybeSingle();
 
   return {
     email: (data?.delivery_email as string | null) ?? null,
+    email_frequency: (data?.email_frequency as EmailFrequency) ?? "daily",
   };
 }
 

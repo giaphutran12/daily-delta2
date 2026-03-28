@@ -11,6 +11,7 @@ import type {
   ReportSignal,
   SignalDefinition,
   Invitation,
+  CompetitorLink,
 } from "@/lib/types";
 
 const API_BASE = "/api";
@@ -61,10 +62,38 @@ async function authFetch(url: string, opts: RequestInit = {}): Promise<Response>
   return res;
 }
 
-export type { Organization, OrganizationMember, Company, TrackedCompany, Signal, Report, ReportData, ReportSection, ReportSignal, SignalDefinition };
+async function getApiErrorMessage(
+  res: Response,
+  fallback: string,
+): Promise<string> {
+  try {
+    const data = (await res.json()) as { error?: string; message?: string };
+    return data.error ?? data.message ?? fallback;
+  } catch {
+    try {
+      const text = await res.text();
+      return text || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+}
+
+async function requireOk(
+  res: Response,
+  fallback: string,
+): Promise<Response> {
+  if (res.ok) return res;
+  throw new Error(await getApiErrorMessage(res, fallback));
+}
+
+export type { Organization, OrganizationMember, Company, TrackedCompany, Signal, Report, ReportData, ReportSection, ReportSignal, SignalDefinition, CompetitorLink };
+
+export type EmailFrequency = "daily" | "every_3_days" | "weekly" | "monthly";
 
 export interface UserSettings {
   email: string | null;
+  email_frequency: EmailFrequency;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +111,7 @@ export async function createOrganization(name: string): Promise<Organization> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
   });
+  await requireOk(res, "Failed to create organization");
   const data = await res.json();
   return data.organization;
 }
@@ -107,7 +137,10 @@ export async function inviteMember(
 }
 
 export async function removeMember(orgId: string, userId: string): Promise<void> {
-  await authFetch(`${API_BASE}/organizations/${orgId}/members/${userId}`, { method: "DELETE" });
+  const res = await authFetch(`${API_BASE}/organizations/${orgId}/members/${userId}`, {
+    method: "DELETE",
+  });
+  await requireOk(res, "Failed to remove member");
 }
 
 export async function cancelInvitation(orgId: string, invitationId: string): Promise<void> {
@@ -218,6 +251,52 @@ export async function getSignals(
   return res.json();
 }
 
+export async function getComparisonSignals(
+  companyIds: string[],
+  limit = 500,
+): Promise<{ signals: Signal[]; total: number }> {
+  const params = new URLSearchParams();
+  params.set("company_ids", companyIds.join(","));
+  params.set("limit", String(limit));
+  const res = await authFetch(`${API_BASE}/signals?${params}`);
+  return res.json();
+}
+
+export async function getCompetitors(
+  companyId: string,
+): Promise<{ competitors: CompetitorLink[]; suggestions: Company[] }> {
+  const res = await authFetch(`${API_BASE}/companies/${companyId}/competitors`);
+  return res.json();
+}
+
+export async function addCompetitor(
+  companyId: string,
+  payload:
+    | { competitor_company_id: string }
+    | { website_url: string; page_title?: string },
+): Promise<{ success: boolean; competitor: Company; refreshQueued: boolean }> {
+  const res = await authFetch(`${API_BASE}/companies/${companyId}/competitors`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+export async function removeCompetitor(
+  companyId: string,
+  competitorCompanyId: string,
+): Promise<void> {
+  await authFetch(
+    `${API_BASE}/companies/${companyId}/competitors?competitor_company_id=${encodeURIComponent(
+      competitorCompanyId,
+    )}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Signal Definitions
 // ---------------------------------------------------------------------------
@@ -293,6 +372,7 @@ export async function toggleSignalDefinition(
 
 export async function getUserSettings(): Promise<UserSettings> {
   const res = await authFetch(`${API_BASE}/user-settings`);
+  await requireOk(res, "Failed to load user settings");
   return res.json();
 }
 
@@ -302,10 +382,18 @@ export async function setEmail(email: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: string }).error ?? "Failed to update email");
-  }
+  await requireOk(res, "Failed to update delivery email");
+}
+
+export async function setEmailFrequency(
+  frequency: EmailFrequency,
+): Promise<void> {
+  const res = await authFetch(`${API_BASE}/user-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ frequency }),
+  });
+  await requireOk(res, "Failed to update email frequency");
 }
 
 // ---------------------------------------------------------------------------
@@ -405,5 +493,6 @@ export async function getChatMessages(companyId: string): Promise<{
   sessionId: string;
 }> {
   const res = await authFetch(`${API_BASE}/chat/${companyId}/messages`);
+  await requireOk(res, "Failed to load chat history");
   return res.json();
 }

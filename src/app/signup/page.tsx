@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -27,11 +28,24 @@ const signUpSchema = z
 
 type SignUpForm = z.infer<typeof signUpSchema>;
 
-export default function SignUpPage() {
+function normalizeRedirectTarget(value: string | null): string | null {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return null;
+  }
+
+  return value;
+}
+
+function SignUpForm() {
   const { signUp } = useAuth();
+  const searchParams = useSearchParams();
   const [serverError, setServerError] = useState("");
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
+  const redirectTarget = normalizeRedirectTarget(searchParams.get("redirect"));
+  const loginHref = redirectTarget
+    ? `/login?redirect=${encodeURIComponent(redirectTarget)}`
+    : "/login";
 
   const {
     register,
@@ -58,7 +72,13 @@ export default function SignUpPage() {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="flex justify-center mb-6">
-          <Image src="/logo.png" alt="Daily Delta" width={48} height={48} />
+          <Image
+            src="/logo.png"
+            alt="Daily Delta"
+            width={48}
+            height={48}
+            className="size-12"
+          />
         </div>
         <Card>
           <CardHeader className="text-center">
@@ -74,7 +94,7 @@ export default function SignUpPage() {
                     Account created! Check your email to confirm, then sign in.
                   </AlertDescription>
                 </Alert>
-                <Link href="/login" className="text-primary text-sm font-medium hover:underline">
+                <Link href={loginHref} className="text-primary text-sm font-medium hover:underline">
                   Go to Sign In →
                 </Link>
               </div>
@@ -86,6 +106,7 @@ export default function SignUpPage() {
                     id="email"
                     type="email"
                     placeholder="you@example.com"
+                    autoComplete="email"
                     {...register("email")}
                     aria-invalid={!!errors.email}
                   />
@@ -100,6 +121,7 @@ export default function SignUpPage() {
                     id="password"
                     type="password"
                     placeholder="Min 8 characters"
+                    autoComplete="new-password"
                     {...register("password")}
                     aria-invalid={!!errors.password}
                   />
@@ -114,6 +136,7 @@ export default function SignUpPage() {
                     id="confirmPassword"
                     type="password"
                     placeholder="Repeat your password"
+                    autoComplete="new-password"
                     {...register("confirmPassword")}
                     aria-invalid={!!errors.confirmPassword}
                   />
@@ -144,7 +167,7 @@ export default function SignUpPage() {
             {!success && (
               <p className="mt-4 text-center text-sm text-muted-foreground">
                 Already have an account?{" "}
-                <Link href="/login" className="text-primary font-medium hover:underline">
+                <Link href={loginHref} className="text-primary font-medium hover:underline">
                   Sign In
                 </Link>
               </p>
@@ -153,5 +176,19 @@ export default function SignUpPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      }
+    >
+      <SignUpForm />
+    </Suspense>
   );
 }

@@ -6,6 +6,7 @@ import {
   getTrackedActiveCompanies,
   getCompanyById,
   getTrackingOrgs,
+  getTrackedCompanies,
   updateLastAgentRun,
 } from "@/services/company-service";
 import { sendDigestEmail } from "@/services/email-service";
@@ -16,7 +17,33 @@ import {
 } from "@/services/report-service";
 import { getSignalDefinitions } from "@/services/signal-definition-service";
 import { getOrganizationMembers } from "@/services/organization-service";
-import { getUserEmail } from "@/services/user-service";
+import {
+  type EmailFrequency,
+  getUserSettings,
+} from "@/services/user-service";
+
+const FREQUENCY_INTERVAL_DAYS: Record<EmailFrequency, number> = {
+  daily: 1,
+  every_3_days: 3,
+  weekly: 7,
+  monthly: 30,
+};
+
+interface OrgRecipient {
+  email: string;
+  emailFrequency: EmailFrequency;
+}
+
+function shouldRunToday(
+  frequency: EmailFrequency,
+  lastRun: string | null,
+): boolean {
+  const intervalDays = FREQUENCY_INTERVAL_DAYS[frequency] || 1;
+  if (!lastRun) return true;
+  const daysSince =
+    (Date.now() - new Date(lastRun).getTime()) / (1000 * 60 * 60 * 24);
+  return daysSince >= intervalDays;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -287,20 +314,32 @@ async function storeSignals(
 
 async function getOrgRecipientEmails(
   organizationId: string,
-): Promise<string[]> {
+): Promise<OrgRecipient[]> {
   const members = await getOrganizationMembers(organizationId);
   const activeMembers = members.filter(
     (m): m is typeof m & { user_id: string } => m.user_id !== null,
   );
 
-  const emails = await Promise.all(
+  const recipients = await Promise.all(
     activeMembers.map(async (member) => {
-      const email = await getUserEmail(member.user_id);
-      return email || member.email || null;
+      const settings = await getUserSettings(member.user_id);
+      const email = settings.email || member.email || null;
+      return email
+        ? {
+            email,
+            emailFrequency: settings.email_frequency,
+          }
+        : null;
     }),
   );
 
-  return emails.filter((e): e is string => e !== null);
+  const seen = new Set<string>();
+  return recipients.filter((recipient): recipient is OrgRecipient => {
+    if (!recipient) return false;
+    if (seen.has(recipient.email)) return false;
+    seen.add(recipient.email);
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -460,8 +499,22 @@ export async function runPipeline(
 
     // Send one digest email per org
     for (const [orgId, orgResults] of orgCompanyMap) {
-      const emails = await getOrgRecipientEmails(orgId);
-      if (emails.length === 0) continue;
+      const recipients = await getOrgRecipientEmails(orgId);
+      if (recipients.length === 0) continue;
+
+      const trackedCompanies = await getTrackedCompanies(orgId);
+      const orgLastRun = trackedCompanies.reduce<string | null>(
+        (earliest, trackedCompany) => {
+          const originalCompany =
+            companyMap.get(trackedCompany.company_id) ?? trackedCompany;
+          if (!originalCompany.last_agent_run) return earliest;
+          if (!earliest) return originalCompany.last_agent_run;
+          return originalCompany.last_agent_run < earliest
+            ? originalCompany.last_agent_run
+            : earliest;
+        },
+        null,
+      );
 
       // Build digest data: company + findings pairs
       const digestCompanies = orgResults.map((r) => ({
@@ -469,12 +522,25 @@ export async function runPipeline(
         findings: r.findings,
       }));
 
-      for (const email of emails) {
-        const sent = await sendDigestEmail(email, digestCompanies);
+      for (const recipient of recipients) {
+        if (!shouldRunToday(recipient.emailFrequency, orgLastRun)) {
+          console.log(
+            "[PIPELINE] Skipping digest for %s (org %s, frequency %s, last run %s)",
+            recipient.email,
+            orgId,
+            recipient.emailFrequency,
+            orgLastRun ?? "never",
+          );
+          continue;
+        }
+
+        const sent = await sendDigestEmail(recipient.email, digestCompanies);
         if (sent) {
           console.log(
             "[PIPELINE] Digest email sent to %s (org %s, %d companies)",
-            email, orgId, digestCompanies.length,
+            recipient.email,
+            orgId,
+            digestCompanies.length,
           );
         }
       }

@@ -23,16 +23,25 @@ const loginSchema = z.object({
 
 type LoginForm = z.infer<typeof loginSchema>;
 
+function normalizeRedirectTarget(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+    return "/";
+  }
+
+  return value;
+}
+
 function LoginForm() {
   const { signIn } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [serverError, setServerError] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // Only allow same-origin redirects to prevent open-redirect attacks
-  const rawRedirect = searchParams.get("redirect") ?? "";
-  const safeRedirect = rawRedirect.startsWith("/") ? rawRedirect : "/";
+  const redirectTarget = normalizeRedirectTarget(searchParams.get("redirect"));
+  const signUpHref =
+    redirectTarget === "/"
+      ? "/signup"
+      : `/signup?redirect=${encodeURIComponent(redirectTarget)}`;
 
   const {
     register,
@@ -51,7 +60,7 @@ function LoginForm() {
       setLoading(false);
     } else {
       toast.success("Signed in successfully");
-      router.push(safeRedirect);
+      router.push(redirectTarget);
     }
   };
 
@@ -59,7 +68,13 @@ function LoginForm() {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-sm">
         <div className="flex justify-center mb-6">
-          <Image src="/logo.png" alt="Daily Delta" width={48} height={48} />
+          <Image
+            src="/logo.png"
+            alt="Daily Delta"
+            width={48}
+            height={48}
+            className="size-12"
+          />
         </div>
         <Card>
           <CardHeader className="text-center">
@@ -74,6 +89,7 @@ function LoginForm() {
                   id="email"
                   type="email"
                   placeholder="you@example.com"
+                  autoComplete="email"
                   {...register("email")}
                   aria-invalid={!!errors.email}
                 />
@@ -88,6 +104,7 @@ function LoginForm() {
                   id="password"
                   type="password"
                   placeholder="Enter your password"
+                  autoComplete="current-password"
                   {...register("password")}
                   aria-invalid={!!errors.password}
                 />
@@ -116,7 +133,7 @@ function LoginForm() {
 
             <p className="mt-4 text-center text-sm text-muted-foreground">
               Don&apos;t have an account?{" "}
-              <Link href="/signup" className="text-primary font-medium hover:underline">
+              <Link href={signUpHref} className="text-primary font-medium hover:underline">
                 Create one
               </Link>
             </p>
