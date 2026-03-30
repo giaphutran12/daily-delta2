@@ -1,6 +1,6 @@
 import { cron } from "inngest";
+import { PIPELINE_REQUESTED_EVENT } from "@/inngest/events";
 import { inngest } from "../client";
-import { runPipeline } from "@/services/pipeline-service";
 
 export const dailyPipeline = inngest.createFunction(
   {
@@ -8,12 +8,15 @@ export const dailyPipeline = inngest.createFunction(
     triggers: [cron("TZ=America/New_York 0 7 * * *")],
   },
   async ({ step }) => {
-    const result = await step.run("run-pipeline", async () => runPipeline());
+    await step.sendEvent("queue-daily-pipeline-request", {
+      name: PIPELINE_REQUESTED_EVENT,
+      data: {
+        source: "cron",
+      },
+    });
 
     return {
-      status: result.companiesProcessed > 0 ? "completed" : "no-op",
-      companiesProcessed: result.companiesProcessed,
-      elapsed_seconds: result.elapsed_seconds,
+      status: "queued",
     };
   },
 );

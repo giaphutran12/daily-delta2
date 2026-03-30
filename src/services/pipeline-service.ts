@@ -1,49 +1,16 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
-import type { Company, SignalFinding, PipelineResult, CompanyPipelineResult } from "@/lib/types";
+import type { Company, SignalFinding, CompanyPipelineResult } from "@/lib/types";
 import {
-  getTrackedActiveCompanies,
-  getCompanyById,
-  getTrackingOrgs,
-  getTrackedCompanies,
   updateLastAgentRun,
 } from "@/services/company-service";
-import { sendDigestEmail } from "@/services/email-service";
 import { runIntelligenceAgentsSilent } from "@/services/orchestrator";
 import {
   generateReportFromFindings,
   storeReport,
 } from "@/services/report-service";
 import { getSignalDefinitions } from "@/services/signal-definition-service";
-import { getOrganizationMembers } from "@/services/organization-service";
-import {
-  type EmailFrequency,
-  getUserSettings,
-} from "@/services/user-service";
-
-const FREQUENCY_INTERVAL_DAYS: Record<EmailFrequency, number> = {
-  daily: 1,
-  every_3_days: 3,
-  weekly: 7,
-  monthly: 30,
-};
-
-interface OrgRecipient {
-  email: string;
-  emailFrequency: EmailFrequency;
-}
-
-function shouldRunToday(
-  frequency: EmailFrequency,
-  lastRun: string | null,
-): boolean {
-  const intervalDays = FREQUENCY_INTERVAL_DAYS[frequency] || 1;
-  if (!lastRun) return true;
-  const daysSince =
-    (Date.now() - new Date(lastRun).getTime()) / (1000 * 60 * 60 * 24);
-  return daysSince >= intervalDays;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -312,42 +279,9 @@ async function storeSignals(
   }
 }
 
-async function getOrgRecipientEmails(
-  organizationId: string,
-): Promise<OrgRecipient[]> {
-  const members = await getOrganizationMembers(organizationId);
-  const activeMembers = members.filter(
-    (m): m is typeof m & { user_id: string } => m.user_id !== null,
-  );
-
-  const recipients = await Promise.all(
-    activeMembers.map(async (member) => {
-      const settings = await getUserSettings(member.user_id);
-      const email = settings.email || member.email || null;
-      return email
-        ? {
-            email,
-            emailFrequency: settings.email_frequency,
-          }
-        : null;
-    }),
-  );
-
-  const seen = new Set<string>();
-  return recipients.filter((recipient): recipient is OrgRecipient => {
-    if (!recipient) return false;
-    if (seen.has(recipient.email)) return false;
-    seen.add(recipient.email);
-    return true;
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Process a single company (core pipeline unit)
-// ---------------------------------------------------------------------------
-
 export async function processCompany(
   company: Company,
+  trigger: "manual" | "cron" = "cron",
 ): Promise<CompanyPipelineResult> {
   const tag = `[PIPELINE] [${company.company_name}]`;
   const startTime = Date.now();
@@ -385,7 +319,7 @@ export async function processCompany(
 
       // 6. Generate & store report
       const reportData = generateReportFromFindings(company, finalFindings, definitions);
-      const report = await storeReport(company.company_id, reportData, "cron");
+      const report = await storeReport(company.company_id, reportData, trigger);
       console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
 
       await updateLastAgentRun(company.company_id);
@@ -429,130 +363,4 @@ export async function processCompany(
       findings: [],
     };
   }
-}
-
-// ---------------------------------------------------------------------------
-// Run full pipeline (all tracked companies) + send digest emails
-// ---------------------------------------------------------------------------
-
-export async function runPipeline(
-  companyIds?: string[],
-): Promise<PipelineResult> {
-  const pipelineStart = Date.now();
-
-  // Build a map of company_id → Company for the digest
-  const companyMap = new Map<string, Company>();
-
-  let companies: Company[];
-
-  if (companyIds && companyIds.length > 0) {
-    // Fetch specific companies
-    const fetched = await Promise.all(companyIds.map((id) => getCompanyById(id)));
-    companies = fetched.filter((c): c is Company => c !== null);
-    if (companies.length === 0) throw new Error("None of the specified companies were found");
-  } else {
-    companies = await getTrackedActiveCompanies();
-  }
-
-  if (companies.length === 0) {
-    console.log("[PIPELINE] No tracked active companies to process");
-    return { companiesProcessed: 0, results: [], elapsed_seconds: 0 };
-  }
-
-  for (const c of companies) companyMap.set(c.company_id, c);
-
-  console.log("[PIPELINE] Processing %d companies", companies.length);
-
-  // Process all companies
-  const results: CompanyPipelineResult[] = [];
-  const BATCH_SIZE = 5;
-
-  for (let i = 0; i < companies.length; i += BATCH_SIZE) {
-    const batch = companies.slice(i, i + BATCH_SIZE);
-    const batchResults = await Promise.all(
-      batch.map((company) => processCompany(company)),
-    );
-    results.push(...batchResults);
-  }
-
-  // Collect companies that had new signals
-  const companiesWithUpdates = results.filter((r) => r.signalCount > 0 && !r.error);
-
-  if (companiesWithUpdates.length === 0) {
-    console.log("[PIPELINE] No new signals across any company — skipping email");
-  } else {
-    console.log(
-      "[PIPELINE] %d companies had new signals — sending digest emails",
-      companiesWithUpdates.length,
-    );
-
-    // Gather all org IDs that track any of the updated companies
-    const orgCompanyMap = new Map<string, CompanyPipelineResult[]>();
-
-    for (const result of companiesWithUpdates) {
-      const orgIds = await getTrackingOrgs(result.companyId);
-      for (const orgId of orgIds) {
-        if (!orgCompanyMap.has(orgId)) orgCompanyMap.set(orgId, []);
-        orgCompanyMap.get(orgId)!.push(result);
-      }
-    }
-
-    // Send one digest email per org
-    for (const [orgId, orgResults] of orgCompanyMap) {
-      const recipients = await getOrgRecipientEmails(orgId);
-      if (recipients.length === 0) continue;
-
-      const trackedCompanies = await getTrackedCompanies(orgId);
-      const orgLastRun = trackedCompanies.reduce<string | null>(
-        (earliest, trackedCompany) => {
-          const originalCompany =
-            companyMap.get(trackedCompany.company_id) ?? trackedCompany;
-          if (!originalCompany.last_agent_run) return earliest;
-          if (!earliest) return originalCompany.last_agent_run;
-          return originalCompany.last_agent_run < earliest
-            ? originalCompany.last_agent_run
-            : earliest;
-        },
-        null,
-      );
-
-      // Build digest data: company + findings pairs
-      const digestCompanies = orgResults.map((r) => ({
-        company: companyMap.get(r.companyId)!,
-        findings: r.findings,
-      }));
-
-      for (const recipient of recipients) {
-        if (!shouldRunToday(recipient.emailFrequency, orgLastRun)) {
-          console.log(
-            "[PIPELINE] Skipping digest for %s (org %s, frequency %s, last run %s)",
-            recipient.email,
-            orgId,
-            recipient.emailFrequency,
-            orgLastRun ?? "never",
-          );
-          continue;
-        }
-
-        const sent = await sendDigestEmail(recipient.email, digestCompanies);
-        if (sent) {
-          console.log(
-            "[PIPELINE] Digest email sent to %s (org %s, %d companies)",
-            recipient.email,
-            orgId,
-            digestCompanies.length,
-          );
-        }
-      }
-    }
-  }
-
-  const elapsed = (Date.now() - pipelineStart) / 1000;
-  console.log("[PIPELINE] Pipeline finished in %.1fs", elapsed);
-
-  return {
-    companiesProcessed: results.length,
-    results,
-    elapsed_seconds: Math.round(elapsed * 10) / 10,
-  };
 }

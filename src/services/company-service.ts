@@ -269,6 +269,24 @@ export async function getCompanyById(
   return (data as Company) ?? null;
 }
 
+export async function getCompaniesByIds(
+  companyIds: string[],
+): Promise<Company[]> {
+  if (companyIds.length === 0) return [];
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("companies")
+    .select("*")
+    .in("company_id", companyIds);
+
+  if (error) {
+    throw new Error(`Failed to fetch companies: ${error.message}`);
+  }
+
+  return (data ?? []) as Company[];
+}
+
 export async function updateCompanyFromDiscovery(
   companyId: string,
   discovery: DiscoveryResult,

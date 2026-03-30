@@ -13,7 +13,7 @@ import {
   getCompetitors,
   removeCompetitor,
 } from "@/services/competitor-service";
-import { processCompany } from "@/services/pipeline-service";
+import { enqueuePipelineRequestedEvent } from "@/services/pipeline-request-service";
 import { runDiscoveryAgent } from "@/services/orchestrator";
 import { setCompanyPlatformStatus, updateCompanyFromDiscovery } from "@/services/company-service";
 import { normalizeUrl } from "@/lib/utils/domain";
@@ -47,10 +47,10 @@ async function refreshCompetitorCompany(
       }
     }
 
-    const company = await getCompanyById(companyId);
-    if (company) {
-      await processCompany(company);
-    }
+    await enqueuePipelineRequestedEvent({
+      source: "refresh",
+      companyIds: [companyId],
+    });
   } catch (error) {
     console.error("[COMPETITOR] Failed background refresh:", error);
     try {
