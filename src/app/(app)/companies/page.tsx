@@ -2,17 +2,22 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Play } from "lucide-react";
+import { toast } from "sonner";
 import ShinyText from "@/components/ShinyText";
 import {
   getCompanies,
   addAndTrackCompanySSE,
   searchCatalog,
+  getOrgMembers,
+  triggerManualPipelineRun,
   type TrackedCompany,
   type Company,
+  type OrganizationMember,
 } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -26,6 +31,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -38,12 +44,13 @@ const CATALOG_DISPLAY_LIMIT = 15;
 
 export default function CompaniesPage() {
   const router = useRouter();
-  const { currentOrg } = useAuth();
+  const { currentOrg, user } = useAuth();
 
   const [companies, setCompanies] = useState<TrackedCompany[]>([]);
   const [trackingLimit, setTrackingLimit] = useState(5);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
 
   // Add company dialog state
   const [addOpen, setAddOpen] = useState(false);
@@ -58,6 +65,13 @@ export default function CompaniesPage() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [catalogFilter, setCatalogFilter] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Manual run dialog state
+  const [runOpen, setRunOpen] = useState(false);
+  const [runLoading, setRunLoading] = useState(false);
+  const [runMembersLoading, setRunMembersLoading] = useState(false);
+  const [orgMembers, setOrgMembers] = useState<OrganizationMember[]>([]);
+  const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
 
   const fetchCompanies = useCallback(async () => {
     try {
@@ -74,6 +88,14 @@ export default function CompaniesPage() {
     setLoading(true);
     fetchCompanies().finally(() => setLoading(false));
   }, [currentOrg, fetchCompanies]);
+
+  useEffect(() => {
+    setSelectedCompanyIds((prev) =>
+      prev.filter((companyId) =>
+        companies.some((company) => company.company_id === companyId),
+      ),
+    );
+  }, [companies]);
 
   // Load catalog when dialog opens
   useEffect(() => {
@@ -107,6 +129,25 @@ export default function CompaniesPage() {
     }, 300);
     return () => clearTimeout(debounceRef.current);
   }, [catalogFilter, addOpen]);
+
+  useEffect(() => {
+    if (!runOpen || !currentOrg) return;
+
+    setRunMembersLoading(true);
+    getOrgMembers(currentOrg.organization_id)
+      .then((members) => {
+        setOrgMembers(
+          members.filter(
+            (member) =>
+              member.user_id !== null &&
+              member.status !== "pending" &&
+              member.user_id !== user?.id,
+          ),
+        );
+      })
+      .catch(() => setOrgMembers([]))
+      .finally(() => setRunMembersLoading(false));
+  }, [runOpen, currentOrg, user?.id]);
 
   const handleAddByUrl = (e: React.FormEvent) => {
     e.preventDefault();
@@ -207,6 +248,77 @@ export default function CompaniesPage() {
       (c.industry?.toLowerCase().includes(q) ?? false)
     );
   });
+
+  const selectedCompanies = companies.filter((company) =>
+    selectedCompanyIds.includes(company.company_id),
+  );
+
+  const allVisibleSelected =
+    filteredCompanies.length > 0 &&
+    filteredCompanies.every((company) =>
+      selectedCompanyIds.includes(company.company_id),
+    );
+
+  const toggleCompanySelection = (companyId: string, checked: boolean) => {
+    setSelectedCompanyIds((prev) => {
+      if (checked) {
+        return prev.includes(companyId) ? prev : [...prev, companyId];
+      }
+      return prev.filter((id) => id !== companyId);
+    });
+  };
+
+  const toggleVisibleSelection = () => {
+    setSelectedCompanyIds((prev) => {
+      const visibleIds = filteredCompanies.map((company) => company.company_id);
+      if (visibleIds.length === 0) return prev;
+      if (visibleIds.every((companyId) => prev.includes(companyId))) {
+        return prev.filter((companyId) => !visibleIds.includes(companyId));
+      }
+      return [...new Set([...prev, ...visibleIds])];
+    });
+  };
+
+  const toggleRecipientSelection = (userId: string, checked: boolean) => {
+    setSelectedRecipientIds((prev) => {
+      if (checked) {
+        return prev.includes(userId) ? prev : [...prev, userId];
+      }
+      return prev.filter((id) => id !== userId);
+    });
+  };
+
+  const resetRunDialog = () => {
+    setRunOpen(false);
+    setSelectedRecipientIds([]);
+  };
+
+  const handleRunSelected = async () => {
+    if (selectedCompanyIds.length === 0) return;
+
+    setRunLoading(true);
+    try {
+      const result = await triggerManualPipelineRun({
+        companyIds: selectedCompanyIds,
+        recipientUserIds: selectedRecipientIds,
+      });
+
+      const companyCount = result.requested_company_count ?? selectedCompanyIds.length;
+      toast.success(
+        companyCount === 1
+          ? "Manual run queued. The report email will go to you by default."
+          : `Manual run queued for ${companyCount} companies. One combined email will go to you by default.`,
+      );
+      setSelectedCompanyIds([]);
+      resetRunDialog();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to queue manual run",
+      );
+    } finally {
+      setRunLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-6">
@@ -388,12 +500,140 @@ export default function CompaniesPage() {
         </Dialog>
       </div>
 
-      <Input
-        placeholder="Search tracked companies..."
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
-        className="max-w-sm"
-      />
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <Input
+          placeholder="Search tracked companies..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="max-w-sm"
+        />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={filteredCompanies.length === 0}
+            onClick={toggleVisibleSelection}
+          >
+            {allVisibleSelected ? "Clear visible selection" : "Select visible"}
+          </Button>
+
+          <Dialog
+            open={runOpen}
+            onOpenChange={(open) => {
+              if (!runLoading) {
+                if (!open) {
+                  setSelectedRecipientIds([]);
+                }
+                setRunOpen(open);
+              }
+            }}
+          >
+            <DialogTrigger
+              render={<Button size="sm" disabled={selectedCompanyIds.length === 0} />}
+            >
+              <Play className="h-4 w-4" />
+              Run Selected
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Run Selected Companies</DialogTitle>
+                <DialogDescription>
+                  This queues one explicit manual request for the selected companies.
+                  You&apos;ll get one combined report email by default.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Selected companies</Label>
+                  <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg border p-3">
+                    {selectedCompanies.map((company) => (
+                      <div
+                        key={company.company_id}
+                        className="flex items-center justify-between gap-3 text-sm"
+                      >
+                        <span className="font-medium">{company.company_name}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {company.domain}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Default delivery</Label>
+                  <p className="rounded-lg border bg-muted/40 p-3 text-sm text-muted-foreground">
+                    This run will send the digest to{" "}
+                    <span className="font-medium text-foreground">
+                      {user?.email ?? "you"}
+                    </span>{" "}
+                    by default.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Also send to teammates</Label>
+                  <div className="rounded-lg border p-3">
+                    {runMembersLoading ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading organization members...
+                      </div>
+                    ) : orgMembers.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        No additional organization members are available yet.
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        {orgMembers.map((member) => (
+                          <label
+                            key={member.id}
+                            className="flex items-start gap-3 rounded-md"
+                          >
+                            <Checkbox
+                              checked={selectedRecipientIds.includes(member.user_id!)}
+                              onCheckedChange={(checked) =>
+                                toggleRecipientSelection(
+                                  member.user_id!,
+                                  checked === true,
+                                )
+                              }
+                            />
+                            <div className="flex flex-col">
+                              <span className="text-sm font-medium">
+                                {member.email ?? member.user_id}
+                              </span>
+                              <span className="text-xs capitalize text-muted-foreground">
+                                {member.role}
+                              </span>
+                            </div>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={resetRunDialog}
+                  disabled={runLoading}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleRunSelected} disabled={runLoading}>
+                  {runLoading ? "Queueing..." : "Queue manual run"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
 
       {loading ? (
         <div className="flex flex-col gap-2">
@@ -413,6 +653,7 @@ export default function CompaniesPage() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-12">Select</TableHead>
                 <TableHead>Company</TableHead>
                 <TableHead>Domain</TableHead>
                 <TableHead>Industry</TableHead>
@@ -435,6 +676,15 @@ export default function CompaniesPage() {
                   tabIndex={0}
                   role="link"
                 >
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selectedCompanyIds.includes(company.company_id)}
+                      onCheckedChange={(checked) =>
+                        toggleCompanySelection(company.company_id, checked === true)
+                      }
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </TableCell>
                   <TableCell className="font-medium">
                     <span className="flex items-center gap-2">
                       {company.company_name}

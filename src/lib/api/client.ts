@@ -96,6 +96,12 @@ export interface UserSettings {
   email_frequency: EmailFrequency;
 }
 
+export interface TriggerPipelineResponse {
+  status: "queued";
+  source: "manual";
+  requested_company_count: number | null;
+}
+
 // ---------------------------------------------------------------------------
 // Organizations
 // ---------------------------------------------------------------------------
@@ -205,6 +211,36 @@ export async function getCompanies(): Promise<{ companies: TrackedCompany[]; tra
 
 export async function untrackCompany(id: string): Promise<void> {
   await authFetch(`${API_BASE}/companies/${id}`, { method: "DELETE" });
+}
+
+export async function triggerManualPipelineRun(input: {
+  companyIds: string[];
+  recipientUserIds?: string[];
+}): Promise<TriggerPipelineResponse> {
+  const companyIds = input.companyIds.filter(Boolean);
+  if (companyIds.length === 0) {
+    throw new Error("Select at least one company to run");
+  }
+
+  const payload: {
+    company_id?: string;
+    company_ids?: string[];
+    recipient_user_ids?: string[];
+  } = companyIds.length === 1
+    ? { company_id: companyIds[0] }
+    : { company_ids: companyIds };
+
+  if (input.recipientUserIds?.length) {
+    payload.recipient_user_ids = input.recipientUserIds;
+  }
+
+  const res = await authFetch(`${API_BASE}/trigger-pipeline`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  await requireOk(res, "Failed to queue manual pipeline run");
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------

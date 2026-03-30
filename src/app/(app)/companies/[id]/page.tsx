@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   ArrowLeft,
   Trash2,
@@ -9,9 +10,12 @@ import {
   Lock,
   Clock,
   ExternalLink,
+  Loader2,
+  Play,
 } from "lucide-react";
 import {
   addCompetitor,
+  triggerManualPipelineRun,
   getComparisonSignals,
   getCompanies,
   getCompetitors,
@@ -224,6 +228,7 @@ export default function CompanyDetailPage() {
 
   // Untrack company
   const [untrackOpen, setUntrackOpen] = useState(false);
+  const [manualRunLoading, setManualRunLoading] = useState(false);
 
   // Fetch company
   useEffect(() => {
@@ -368,6 +373,24 @@ export default function CompanyDetailPage() {
     }
   };
 
+  const handleManualRun = async () => {
+    if (!company) return;
+
+    setManualRunLoading(true);
+    try {
+      await triggerManualPipelineRun({ companyIds: [company.company_id] });
+      toast.success(
+        `Queued a manual run for ${company.company_name}. The report email will go to you by default.`,
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to queue manual run",
+      );
+    } finally {
+      setManualRunLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col gap-6">
@@ -429,6 +452,21 @@ export default function CompanyDetailPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void handleManualRun()}
+            disabled={manualRunLoading}
+          >
+            {manualRunLoading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="h-3.5 w-3.5" />
+            )}
+            <span className="ml-1">
+              {manualRunLoading ? "Queueing..." : "Run now"}
+            </span>
+          </Button>
           <AlertDialog open={untrackOpen} onOpenChange={setUntrackOpen}>
             <Button
               size="sm"
