@@ -33,7 +33,11 @@ export const pipelineRequested = inngest.createFunction(
     const data = event.data as PipelineRequestedEventData;
 
     const prepared = await step.run("prepare-pipeline-request", () =>
-      preparePipelineRequest(event.id, data.source, data.companyIds),
+      preparePipelineRequest(event.id, data.source, data.companyIds, {
+        organizationId: data.organizationId,
+        requestedByUserId: data.requestedByUserId,
+        recipientUserIds: data.recipientUserIds,
+      }),
     );
 
     if (prepared.dispatches.length > 0) {

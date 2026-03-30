@@ -1,4 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  ApiAuthError,
+  authenticateRequest,
+  verifyOrganizationMembership,
+} from "@/lib/auth/api-auth";
+import { getOrganizationMembers } from "@/services/organization-service";
+import { ensureUser } from "@/services/user-service";
 import { enqueuePipelineRequestedEvent } from "@/services/pipeline-request-service";
 
 export const maxDuration = 800;
@@ -7,11 +14,13 @@ export async function POST(request: NextRequest) {
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const isCronRequest = !!cronSecret && authHeader === `Bearer ${cronSecret}`;
 
-  let body: { company_id?: string; company_ids?: string[] } = {};
+  let body: {
+    company_id?: string;
+    company_ids?: string[];
+    recipient_user_ids?: string[];
+  } = {};
   try {
     body = await request.json();
   } catch {
@@ -22,7 +31,58 @@ export async function POST(request: NextRequest) {
   console.log("[PIPELINE] Trigger received, companies:", ids ? ids.length + " specified" : "(all)");
 
   try {
-    await enqueuePipelineRequestedEvent("manual", ids);
+    if (isCronRequest) {
+      await enqueuePipelineRequestedEvent({
+        source: "manual",
+        companyIds: ids,
+      });
+
+      return NextResponse.json(
+        {
+          status: "queued",
+          source: "manual",
+          requested_company_count: ids?.length ?? null,
+        },
+        { status: 202 },
+      );
+    }
+
+    const user = await authenticateRequest(request);
+    const organizationId = request.headers.get("x-organization-id")?.trim();
+    if (!organizationId) {
+      throw new ApiAuthError(400, "X-Organization-Id header is required");
+    }
+
+    await verifyOrganizationMembership(user.userId, organizationId);
+    await ensureUser(user.userId, user.userEmail);
+
+    if (body.recipient_user_ids?.length) {
+      const members = await getOrganizationMembers(organizationId);
+      const memberUserIds = new Set(
+        members
+          .filter((member): member is typeof member & { user_id: string } => !!member.user_id)
+          .map((member) => member.user_id),
+      );
+
+      const invalidRecipientIds = body.recipient_user_ids.filter(
+        (userId) => !memberUserIds.has(userId),
+      );
+
+      if (invalidRecipientIds.length > 0) {
+        return NextResponse.json(
+          { error: "Manual recipients must belong to the selected organization" },
+          { status: 400 },
+        );
+      }
+    }
+
+    await enqueuePipelineRequestedEvent({
+      source: "manual",
+      companyIds: ids,
+      organizationId,
+      requestedByUserId: user.userId,
+      recipientUserIds: body.recipient_user_ids,
+    });
 
     return NextResponse.json(
       {
@@ -33,6 +93,10 @@ export async function POST(request: NextRequest) {
       { status: 202 },
     );
   } catch (error) {
+    if (error instanceof ApiAuthError) {
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
     console.error("[PIPELINE] Fatal error:", error);
     return NextResponse.json(
       {

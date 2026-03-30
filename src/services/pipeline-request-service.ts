@@ -43,6 +43,9 @@ interface PipelineRequestRow {
   source: PipelineRequestSource;
   status: PipelineRequestStatus;
   requested_company_count: number;
+  organization_id: string | null;
+  requested_by_user_id: string | null;
+  recipient_user_ids: string[] | null;
 }
 
 interface PipelineRequestCompanyRow {
@@ -73,6 +76,14 @@ export interface PreparedPipelineRequest {
   source: PipelineRequestSource;
   companyIds: string[];
   dispatches: Array<{ companyRunId: string; companyId: string }>;
+}
+
+export interface EnqueuePipelineRequestInput {
+  source: PipelineRequestSource;
+  companyIds?: string[];
+  organizationId?: string;
+  requestedByUserId?: string;
+  recipientUserIds?: string[];
 }
 
 export interface ProcessedCompanyRun {
@@ -127,6 +138,18 @@ function dedupeIds(ids?: string[]): string[] | undefined {
   return [...new Set(ids.filter(Boolean))];
 }
 
+function normalizeManualRecipientUserIds(
+  requestedByUserId?: string,
+  recipientUserIds?: string[],
+): string[] | undefined {
+  const normalized = dedupeIds([
+    ...(requestedByUserId ? [requestedByUserId] : []),
+    ...(recipientUserIds ?? []),
+  ]);
+
+  return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   return "code" in error && error.code === "23505";
@@ -174,6 +197,39 @@ async function getOrgRecipientEmails(
   });
 }
 
+async function getScopedManualRecipientEmails(
+  organizationId: string,
+  requestedByUserId: string,
+  recipientUserIds?: string[],
+): Promise<string[]> {
+  const memberRows = await getOrganizationMembers(organizationId);
+  const memberByUserId = new Map(
+    memberRows
+      .filter((member): member is typeof member & { user_id: string } => !!member.user_id)
+      .map((member) => [member.user_id, member]),
+  );
+
+  const targetUserIds = normalizeManualRecipientUserIds(
+    requestedByUserId,
+    recipientUserIds,
+  ) ?? [requestedByUserId];
+
+  const invalidUserIds = targetUserIds.filter((userId) => !memberByUserId.has(userId));
+  if (invalidUserIds.length > 0) {
+    throw new Error("Manual recipients must belong to the selected organization");
+  }
+
+  const recipients = await Promise.all(
+    targetUserIds.map(async (userId) => {
+      const member = memberByUserId.get(userId)!;
+      const settings = await getUserSettings(userId);
+      return settings.email || member.email || null;
+    }),
+  );
+
+  return [...new Set(recipients.filter((email): email is string => !!email))];
+}
+
 function mapSourceToReportTrigger(
   source: PipelineRequestSource,
 ): "cron" | "manual" {
@@ -183,8 +239,32 @@ function mapSourceToReportTrigger(
 async function resolveCompaniesForRequest(
   source: PipelineRequestSource,
   companyIds?: string[],
+  organizationId?: string,
 ): Promise<Company[]> {
   const normalizedIds = dedupeIds(companyIds);
+
+  if (source === "manual" && organizationId) {
+    const trackedCompanies = await getTrackedCompanies(organizationId);
+    const trackedById = new Map(
+      trackedCompanies.map((company) => [company.company_id, company]),
+    );
+
+    if (normalizedIds && normalizedIds.length > 0) {
+      const scopedCompanies = normalizedIds
+        .map((companyId) => trackedById.get(companyId))
+        .filter((company): company is NonNullable<typeof company> => !!company);
+
+      if (scopedCompanies.length !== normalizedIds.length) {
+        throw new Error(
+          "Some specified companies are not tracked by the selected organization",
+        );
+      }
+
+      return scopedCompanies;
+    }
+
+    return trackedCompanies;
+  }
 
   if (normalizedIds && normalizedIds.length > 0) {
     const companies = await getCompaniesByIds(normalizedIds);
@@ -208,7 +288,7 @@ async function getRequestBySourceEventId(
   const { data, error } = await supabase
     .from("pipeline_requests")
     .select(
-      "request_id, source_event_id, source, status, requested_company_count",
+      "request_id, source_event_id, source, status, requested_company_count, organization_id, requested_by_user_id, recipient_user_ids",
     )
     .eq("source_event_id", sourceEventId)
     .maybeSingle();
@@ -224,6 +304,10 @@ async function createPipelineRequestRow(
   sourceEventId: string,
   source: PipelineRequestSource,
   requestedCompanyCount: number,
+  metadata?: Pick<
+    PipelineRequestRow,
+    "organization_id" | "requested_by_user_id" | "recipient_user_ids"
+  >,
 ): Promise<PipelineRequestRow> {
   const supabase = createAdminClient();
   const status: PipelineRequestStatus =
@@ -236,10 +320,13 @@ async function createPipelineRequestRow(
       source,
       status,
       requested_company_count: requestedCompanyCount,
+      organization_id: metadata?.organization_id ?? null,
+      requested_by_user_id: metadata?.requested_by_user_id ?? null,
+      recipient_user_ids: metadata?.recipient_user_ids ?? null,
       updated_at: new Date().toISOString(),
     })
     .select(
-      "request_id, source_event_id, source, status, requested_company_count",
+      "request_id, source_event_id, source, status, requested_company_count, organization_id, requested_by_user_id, recipient_user_ids",
     )
     .single();
 
@@ -464,14 +551,19 @@ export async function markCompanyRunsRequested(
 }
 
 export async function enqueuePipelineRequestedEvent(
-  source: PipelineRequestSource,
-  companyIds?: string[],
+  input: EnqueuePipelineRequestInput,
 ): Promise<void> {
   await inngest.send({
     name: PIPELINE_REQUESTED_EVENT,
     data: {
-      source,
-      companyIds: dedupeIds(companyIds),
+      source: input.source,
+      companyIds: dedupeIds(input.companyIds),
+      organizationId: input.organizationId,
+      requestedByUserId: input.requestedByUserId,
+      recipientUserIds: normalizeManualRecipientUserIds(
+        input.requestedByUserId,
+        input.recipientUserIds,
+      ),
     },
   });
 }
@@ -480,13 +572,30 @@ export async function preparePipelineRequest(
   sourceEventId: string,
   source: PipelineRequestSource,
   requestedCompanyIds?: string[],
+  metadata?: {
+    organizationId?: string;
+    requestedByUserId?: string;
+    recipientUserIds?: string[];
+  },
 ): Promise<PreparedPipelineRequest> {
-  const companies = await resolveCompaniesForRequest(source, requestedCompanyIds);
+  const normalizedRecipientUserIds = normalizeManualRecipientUserIds(
+    metadata?.requestedByUserId,
+    metadata?.recipientUserIds,
+  );
+  const companies = await resolveCompaniesForRequest(
+    source,
+    requestedCompanyIds,
+    metadata?.organizationId,
+  );
   const companyIds = [...new Set(companies.map((company) => company.company_id))];
 
   let request = await getRequestBySourceEventId(sourceEventId);
   if (!request) {
-    request = await createPipelineRequestRow(sourceEventId, source, companyIds.length);
+    request = await createPipelineRequestRow(sourceEventId, source, companyIds.length, {
+      organization_id: metadata?.organizationId ?? null,
+      requested_by_user_id: metadata?.requestedByUserId ?? null,
+      recipient_user_ids: normalizedRecipientUserIds ?? null,
+    });
   }
 
   if (companyIds.length === 0) {
@@ -863,7 +972,7 @@ async function getPipelineRequestById(
   const { data, error } = await supabase
     .from("pipeline_requests")
     .select(
-      "request_id, source_event_id, source, status, requested_company_count",
+      "request_id, source_event_id, source, status, requested_company_count, organization_id, requested_by_user_id, recipient_user_ids",
     )
     .eq("request_id", requestId)
     .maybeSingle();
@@ -910,6 +1019,30 @@ export async function buildPipelineDeliveryPlan(
       source: request.source,
       hadCompanyFailures,
       deliveries: [],
+    };
+  }
+
+  if (
+    request.source === "manual" &&
+    request.organization_id &&
+    request.requested_by_user_id
+  ) {
+    const recipientEmails = await getScopedManualRecipientEmails(
+      request.organization_id,
+      request.requested_by_user_id,
+      request.recipient_user_ids ?? undefined,
+    );
+
+    return {
+      requestId,
+      source: request.source,
+      hadCompanyFailures,
+      deliveries: recipientEmails.map((email) => ({
+        requestId,
+        orgId: request.organization_id!,
+        email,
+        reportIds: [...new Set(successfulRows.map((row) => row.report_id!))],
+      })),
     };
   }
 

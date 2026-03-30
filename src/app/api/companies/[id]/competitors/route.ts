@@ -47,7 +47,10 @@ async function refreshCompetitorCompany(
       }
     }
 
-    await enqueuePipelineRequestedEvent("refresh", [companyId]);
+    await enqueuePipelineRequestedEvent({
+      source: "refresh",
+      companyIds: [companyId],
+    });
   } catch (error) {
     console.error("[COMPETITOR] Failed background refresh:", error);
     try {

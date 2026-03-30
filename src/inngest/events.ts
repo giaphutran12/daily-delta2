@@ -8,6 +8,9 @@ export type PipelineRequestSource = "cron" | "manual" | "refresh";
 export interface PipelineRequestedEventData {
   source: PipelineRequestSource;
   companyIds?: string[];
+  organizationId?: string;
+  requestedByUserId?: string;
+  recipientUserIds?: string[];
 }
 
 export interface CompanyRequestedEventData {
