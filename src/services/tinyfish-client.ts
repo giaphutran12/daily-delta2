@@ -1,4 +1,4 @@
-import { TinyFish } from "@tiny-fish/sdk";
+import { TinyFish, RunStatus } from "@tiny-fish/sdk";
 
 const AGENT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
@@ -27,12 +27,42 @@ export interface TinyfishSyncResponse {
   error: { code: string; message: string; category: string } | null;
 }
 
+export type TinyfishAsyncRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+export interface TinyfishAsyncResponse {
+  run_id: string | null;
+  status: TinyfishAsyncRunStatus;
+  result: unknown;
+  error: { code: string; message: string; category: string } | null;
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 function getClient(): TinyFish {
   return new TinyFish(); // reads TINYFISH_API_KEY from env
+}
+
+function mapRunStatus(status: RunStatus): TinyfishAsyncRunStatus {
+  switch (status) {
+    case RunStatus.PENDING:
+      return "queued";
+    case RunStatus.RUNNING:
+      return "running";
+    case RunStatus.COMPLETED:
+      return "completed";
+    case RunStatus.CANCELLED:
+      return "canceled";
+    case RunStatus.FAILED:
+    default:
+      return "failed";
+  }
 }
 
 /** Parse JSON if the value is a string, otherwise return as-is. */
@@ -66,7 +96,7 @@ export function startTinyfishAgent(
   const timeout = setTimeout(() => {
     if (!completedNormally) {
       controller.abort();
-      callbacks.onComplete({ signals: [] });
+      callbacks.onError("Agent timed out while waiting for streaming results");
     }
   }, AGENT_TIMEOUT_MS);
 
@@ -204,7 +234,72 @@ export async function runTinyfishAgentSync(
         category: "runtime",
       },
     };
+  } catch (error) {
+    if ((error as Error).name === "AbortError") {
+      return {
+        run_id: "",
+        status: "FAILED",
+        result: null,
+        error: {
+          code: "TIMEOUT",
+          message: "Agent timed out while waiting for streaming results",
+          category: "runtime",
+        },
+      };
+    }
+
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function queueTinyfishAgent(
+  config: TinyfishRequest,
+): Promise<TinyfishAsyncResponse> {
+  const client = getClient();
+  const response = await client.agent.queue({
+    url: config.url,
+    goal: config.goal,
+  });
+
+  if (response.error) {
+    return {
+      run_id: null,
+      status: "failed",
+      result: null,
+      error: {
+        code: "QUEUE_FAILED",
+        message: response.error.message,
+        category: response.error.category,
+      },
+    };
+  }
+
+  return {
+    run_id: response.run_id,
+    status: "queued",
+    result: null,
+    error: null,
+  };
+}
+
+export async function getTinyfishRun(
+  runId: string,
+): Promise<TinyfishAsyncResponse> {
+  const client = getClient();
+  const run = await client.runs.get(runId);
+
+  return {
+    run_id: run.run_id,
+    status: mapRunStatus(run.status),
+    result: tryParseJson(run.result),
+    error: run.error
+      ? {
+          code: "RUN_FAILED",
+          message: run.error.message,
+          category: run.error.category,
+        }
+      : null,
+  };
 }

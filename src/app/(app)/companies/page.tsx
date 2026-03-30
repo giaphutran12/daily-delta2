@@ -303,7 +303,8 @@ export default function CompaniesPage() {
         recipientUserIds: selectedRecipientIds,
       });
 
-      const companyCount = result.requested_company_count ?? selectedCompanyIds.length;
+      const companyCount =
+        result.requestedCompanyCount ?? selectedCompanyIds.length;
       toast.success(
         companyCount === 1
           ? "Manual run queued. The report email will go to you by default."
@@ -409,8 +410,10 @@ export default function CompaniesPage() {
                           className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 hover:bg-muted/50 transition-colors"
                         >
                           <div className="flex flex-col min-w-0 flex-1">
-                            <span className="text-sm font-medium truncate leading-snug">{c.company_name}</span>
-                            <span className="text-xs text-muted-foreground truncate mt-0.5">
+                            <span className="break-words text-sm font-medium leading-snug sm:truncate">
+                              {c.company_name}
+                            </span>
+                            <span className="mt-0.5 break-all text-xs text-muted-foreground sm:truncate">
                               {c.domain}
                               {c.industry ? ` · ${c.industry}` : ""}
                             </span>
@@ -421,7 +424,7 @@ export default function CompaniesPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              className="shrink-0"
+                              className="min-h-9 shrink-0 px-3"
                               disabled={addStoring}
                               onClick={() => handleTrackFromCatalog(c.website_url)}
                             >
@@ -508,10 +511,11 @@ export default function CompaniesPage() {
           className="max-w-sm"
         />
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           <Button
             size="sm"
             variant="outline"
+            className="w-full sm:w-auto"
             disabled={filteredCompanies.length === 0}
             onClick={toggleVisibleSelection}
           >
@@ -530,7 +534,13 @@ export default function CompaniesPage() {
             }}
           >
             <DialogTrigger
-              render={<Button size="sm" disabled={selectedCompanyIds.length === 0} />}
+              render={(
+                <Button
+                  size="sm"
+                  className="w-full min-w-[9rem] sm:w-auto"
+                  disabled={selectedCompanyIds.length === 0}
+                />
+              )}
             >
               <Play className="h-4 w-4" />
               Run Selected
@@ -649,15 +659,85 @@ export default function CompaniesPage() {
           </p>
         </div>
       ) : (
-        <div className="rounded-xl border">
-          <Table>
+        <>
+          <div className="grid gap-3 md:hidden">
+            {filteredCompanies.map((company) => (
+              <div
+                key={company.company_id}
+                className="rounded-xl border bg-card p-4 shadow-sm"
+              >
+                <div className="flex items-start gap-3">
+                  <Checkbox
+                    checked={selectedCompanyIds.includes(company.company_id)}
+                    onCheckedChange={(checked) =>
+                      toggleCompanySelection(company.company_id, checked === true)
+                    }
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`Select ${company.company_name}`}
+                    className="mt-1"
+                  />
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1 flex-col items-start gap-3 text-left"
+                    onClick={() => router.push(`/companies/${company.company_id}`)}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="break-words text-sm font-semibold leading-snug">
+                          {company.company_name}
+                        </span>
+                        {company.platform_status === "enriching" && (
+                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                        )}
+                      </div>
+                      <p className="mt-1 break-all text-xs text-muted-foreground">
+                        {company.domain}
+                      </p>
+                    </div>
+
+                    <div className="grid w-full gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                      <div className="rounded-lg bg-muted/40 px-3 py-2">
+                        <span className="block text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                          Industry
+                        </span>
+                        <span className="mt-1 block">
+                          {company.platform_status === "enriching" && !company.industry ? (
+                            <ShinyText text="Enriching..." className="text-xs" />
+                          ) : (
+                            company.industry ?? "—"
+                          )}
+                        </span>
+                      </div>
+                      <div className="rounded-lg bg-muted/40 px-3 py-2">
+                        <span className="block text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                          Last Updated
+                        </span>
+                        <span className="mt-1 block">
+                          {company.platform_status === "enriching" && !company.last_agent_run ? (
+                            <ShinyText text="Enriching..." className="text-xs" />
+                          ) : company.last_agent_run ? (
+                            new Date(company.last_agent_run).toLocaleDateString()
+                          ) : (
+                            "—"
+                          )}
+                        </span>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="hidden overflow-x-auto rounded-xl border md:block">
+            <Table className="w-full table-fixed md:table-auto">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-12">Select</TableHead>
                 <TableHead>Company</TableHead>
-                <TableHead>Domain</TableHead>
-                <TableHead>Industry</TableHead>
-                <TableHead>Last Updated</TableHead>
+                <TableHead className="w-[10rem] sm:w-auto">Domain</TableHead>
+                <TableHead className="hidden md:table-cell">Industry</TableHead>
+                <TableHead className="hidden md:table-cell">Last Updated</TableHead>
 
               </TableRow>
             </TableHeader>
@@ -686,22 +766,22 @@ export default function CompaniesPage() {
                     />
                   </TableCell>
                   <TableCell className="font-medium">
-                    <span className="flex items-center gap-2">
+                    <span className="flex min-w-0 items-center gap-2 break-words">
                       {company.company_name}
                       {company.platform_status === "enriching" && (
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                       )}
                     </span>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell className="max-w-[10rem] break-all whitespace-normal text-muted-foreground">
                     {company.domain}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell className="hidden text-muted-foreground md:table-cell">
                     {company.platform_status === "enriching" && !company.industry
                       ? <ShinyText text="Enriching..." className="text-sm" />
                       : company.industry ?? "—"}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
+                  <TableCell className="hidden text-muted-foreground md:table-cell">
                     {company.platform_status === "enriching" && !company.last_agent_run
                       ? <ShinyText text="Enriching..." className="text-sm" />
                       : company.last_agent_run
@@ -711,8 +791,9 @@ export default function CompaniesPage() {
                 </TableRow>
               ))}
             </TableBody>
-          </Table>
-        </div>
+            </Table>
+          </div>
+        </>
       )}
     </div>
   );

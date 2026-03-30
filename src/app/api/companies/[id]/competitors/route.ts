@@ -131,13 +131,25 @@ export const POST = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
     );
   }
 
-  await trackCompany(ctx.organizationId, competitor.company_id, ctx.userId);
-  await addCompetitor(
-    ctx.organizationId,
-    companyId,
-    competitor.company_id,
-    ctx.userId,
-  );
+  try {
+    await trackCompany(ctx.organizationId, competitor.company_id, ctx.userId);
+    await addCompetitor(
+      ctx.organizationId,
+      companyId,
+      competitor.company_id,
+      ctx.userId,
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to add competitor";
+
+    return Response.json(
+      { error: message },
+      {
+        status: message.startsWith("Tracking limit reached") ? 400 : 500,
+      },
+    );
+  }
 
   const refreshQueued =
     shouldRunDiscovery || needsRefresh(competitor.last_agent_run);

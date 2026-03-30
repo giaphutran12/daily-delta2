@@ -1,16 +1,27 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
-import type { Company, SignalFinding, CompanyPipelineResult } from "@/lib/types";
+import type {
+  Company,
+  SignalFinding,
+  CompanyPipelineResult,
+  SignalDefinition,
+} from "@/lib/types";
 import {
   updateLastAgentRun,
+  getCompanyById,
 } from "@/services/company-service";
-import { runIntelligenceAgentsSilent } from "@/services/orchestrator";
+import {
+  buildAgentsFromDefinitions,
+  type PreparedIntelligenceAgent,
+  runIntelligenceAgentsSilent,
+} from "@/services/orchestrator";
 import {
   generateReportFromFindings,
   storeReport,
 } from "@/services/report-service";
 import { getSignalDefinitions } from "@/services/signal-definition-service";
+import { getTinyfishRun, queueTinyfishAgent } from "@/services/tinyfish-client";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -363,4 +374,611 @@ export async function processCompany(
       findings: [],
     };
   }
+}
+
+type CompanyPipelineRunStatus = "queued" | "running" | "completed" | "failed";
+type CompanyAgentRunStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "canceled";
+
+interface CompanyPipelineRunRow {
+  company_run_id: string;
+  company_id: string;
+  requested_source: "cron" | "manual" | "refresh";
+  status: CompanyPipelineRunStatus;
+  report_id: string | null;
+  signal_count: number;
+  error: string | null;
+}
+
+interface CompanyAgentRunRow {
+  agent_run_id: string;
+  company_run_id: string;
+  company_id: string;
+  agent_name: string;
+  definition_id: string | null;
+  tinyfish_run_id: string | null;
+  status: CompanyAgentRunStatus;
+  findings: unknown;
+  error: unknown;
+}
+
+export interface SubmittedCompanyAgents {
+  companyRunId: string;
+  companyId: string;
+  agentCount: number;
+}
+
+export interface PolledCompanyAgents {
+  companyRunId: string;
+  companyId: string;
+  terminal: boolean;
+  pendingCount: number;
+  completedCount: number;
+  failedCount: number;
+}
+
+export interface FinalizedCompanyRun {
+  companyRunId: string;
+  companyId: string;
+  status: "completed" | "failed";
+  signalCount: number;
+  reportId?: string;
+  error?: string;
+}
+
+function toReportTrigger(source: "cron" | "manual" | "refresh"): "manual" | "cron" {
+  return source === "cron" ? "cron" : "manual";
+}
+
+function readAgentErrorMessage(error: unknown): string {
+  if (!error) return "Unknown agent failure";
+  if (typeof error === "string") return error;
+  if (typeof error === "object") {
+    if (
+      "message" in error &&
+      typeof (error as { message?: unknown }).message === "string"
+    ) {
+      return (error as { message: string }).message;
+    }
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "Unknown agent failure";
+    }
+  }
+  return String(error);
+}
+
+function parseTinyfishFindings(
+  raw: unknown,
+  definitionId?: string | null,
+): { findings: SignalFinding[]; error?: string } {
+  let parsed = raw;
+
+  if (typeof parsed === "string") {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch (error) {
+      return {
+        findings: [],
+        error: `Malformed TinyFish JSON result: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+  }
+
+  if (!parsed || typeof parsed !== "object") {
+    return { findings: [] };
+  }
+
+  const maybeSignals = (parsed as { signals?: unknown }).signals;
+  if (maybeSignals == null) {
+    return { findings: [] };
+  }
+
+  if (!Array.isArray(maybeSignals)) {
+    return {
+      findings: [],
+      error: "TinyFish result did not contain a signals array",
+    };
+  }
+
+  const findings = maybeSignals.flatMap((value) => {
+    if (!value || typeof value !== "object") return [];
+
+    const record = value as Record<string, unknown>;
+    const title = typeof record.title === "string" ? record.title : "";
+    const summary = typeof record.summary === "string" ? record.summary : "";
+    if (!title || !summary) return [];
+
+    return [
+      {
+        signal_type:
+          typeof record.signal_type === "string"
+            ? record.signal_type
+            : "general_news",
+        title,
+        summary,
+        source: typeof record.source === "string" ? record.source : "unknown",
+        url: typeof record.url === "string" ? record.url : undefined,
+        detected_at:
+          typeof record.detected_at === "string"
+            ? record.detected_at
+            : undefined,
+        signal_definition_id:
+          typeof record.signal_definition_id === "string"
+            ? record.signal_definition_id
+            : definitionId ?? undefined,
+      } satisfies SignalFinding,
+    ];
+  });
+
+  return { findings };
+}
+
+async function getCompanyPipelineRun(
+  companyRunId: string,
+): Promise<CompanyPipelineRunRow | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("company_pipeline_runs")
+    .select(
+      "company_run_id, company_id, requested_source, status, report_id, signal_count, error",
+    )
+    .eq("company_run_id", companyRunId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Failed to load company pipeline run: ${error.message}`);
+  }
+
+  return (data as CompanyPipelineRunRow | null) ?? null;
+}
+
+async function listCompanyAgentRuns(
+  companyRunId: string,
+): Promise<CompanyAgentRunRow[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("company_agent_runs")
+    .select(
+      "agent_run_id, company_run_id, company_id, agent_name, definition_id, tinyfish_run_id, status, findings, error",
+    )
+    .eq("company_run_id", companyRunId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to load company agent runs: ${error.message}`);
+  }
+
+  return (data ?? []) as CompanyAgentRunRow[];
+}
+
+async function markCompanyRunState(
+  companyRunId: string,
+  fields: Record<string, unknown>,
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("company_pipeline_runs")
+    .update({
+      ...fields,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("company_run_id", companyRunId);
+
+  if (error) {
+    throw new Error(`Failed to update company pipeline run: ${error.message}`);
+  }
+}
+
+export async function failCompanyRun(
+  companyRunId: string,
+  errorMessage: string,
+): Promise<FinalizedCompanyRun> {
+  const companyRun = await getCompanyPipelineRun(companyRunId);
+  if (!companyRun) {
+    throw new Error(`Company pipeline run ${companyRunId} not found`);
+  }
+
+  if (companyRun.status === "completed" || companyRun.status === "failed") {
+    return {
+      companyRunId,
+      companyId: companyRun.company_id,
+      status: companyRun.status,
+      signalCount: companyRun.signal_count,
+      reportId: companyRun.report_id ?? undefined,
+      error: companyRun.error ?? errorMessage,
+    };
+  }
+
+  await markCompanyRunState(companyRunId, {
+    status: "failed",
+    signal_count: 0,
+    report_id: null,
+    error: errorMessage,
+    completed_at: new Date().toISOString(),
+  });
+
+  return {
+    companyRunId,
+    companyId: companyRun.company_id,
+    status: "failed",
+    signalCount: 0,
+    error: errorMessage,
+  };
+}
+
+async function persistCompanyFindings(
+  company: Company,
+  definitions: SignalDefinition[],
+  trigger: "manual" | "cron",
+  findings: SignalFinding[],
+): Promise<CompanyPipelineResult> {
+  const tag = `[PIPELINE] [${company.company_name}]`;
+
+  const newFindings = await deduplicateFindings(company.company_id, findings);
+  console.log(
+    "%s After fast dedup: %d new signals (filtered %d duplicates)",
+    tag,
+    newFindings.length,
+    findings.length - newFindings.length,
+  );
+
+  const finalFindings = await llmDedup(company.company_id, newFindings);
+  console.log(
+    "%s After LLM dedup: %d signals (filtered %d more)",
+    tag,
+    finalFindings.length,
+    newFindings.length - finalFindings.length,
+  );
+
+  if (finalFindings.length > 0) {
+    await storeSignals(company.company_id, finalFindings);
+    console.log("%s Stored %d signals", tag, finalFindings.length);
+
+    const reportData = generateReportFromFindings(company, finalFindings, definitions);
+    const report = await storeReport(company.company_id, reportData, trigger);
+    console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
+
+    await updateLastAgentRun(company.company_id);
+
+    return {
+      companyId: company.company_id,
+      companyName: company.company_name,
+      signalCount: finalFindings.length,
+      reportId: report.report_id,
+      findings: finalFindings,
+    };
+  }
+
+  await updateLastAgentRun(company.company_id);
+
+  return {
+    companyId: company.company_id,
+    companyName: company.company_name,
+    signalCount: 0,
+    findings: [],
+  };
+}
+
+export async function submitCompanyAgents(
+  companyRunId: string,
+): Promise<SubmittedCompanyAgents> {
+  const companyRun = await getCompanyPipelineRun(companyRunId);
+  if (!companyRun) {
+    throw new Error(`Company pipeline run ${companyRunId} not found`);
+  }
+
+  if (companyRun.status === "queued") {
+    const now = new Date().toISOString();
+    await markCompanyRunState(companyRunId, {
+      status: "running",
+      started_at: now,
+    });
+
+    const supabase = createAdminClient();
+    const { error: requestCompanyError } = await supabase
+      .from("pipeline_request_companies")
+      .update({
+        status: "running",
+        updated_at: now,
+      })
+      .eq("company_run_id", companyRunId)
+      .eq("status", "queued");
+
+    if (requestCompanyError) {
+      throw new Error(
+        `Failed to mark request companies running: ${requestCompanyError.message}`,
+      );
+    }
+  }
+
+  const company = await getCompanyById(companyRun.company_id);
+  if (!company) {
+    await markCompanyRunState(companyRunId, {
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      error: `Company ${companyRun.company_id} not found`,
+    });
+
+    return {
+      companyRunId,
+      companyId: companyRun.company_id,
+      agentCount: 0,
+    };
+  }
+
+  const definitions = await getSignalDefinitions(company.company_id);
+  const enabledDefinitions = definitions.filter((definition) => definition.enabled);
+  const agents = buildAgentsFromDefinitions(company, enabledDefinitions);
+  const existingRuns = await listCompanyAgentRuns(companyRunId);
+  const existingDefinitionIds = new Set(
+    existingRuns
+      .map((run) => run.definition_id)
+      .filter((definitionId): definitionId is string => !!definitionId),
+  );
+
+  const agentsToSubmit = agents.filter(
+    (agent) => !existingDefinitionIds.has(agent.definitionId),
+  );
+
+  const supabase = createAdminClient();
+  await Promise.all(
+    agentsToSubmit.map(async (agent) => {
+      const queued = await queueTinyfishAgent({ url: agent.url, goal: agent.goal });
+      const payload = {
+        company_run_id: companyRunId,
+        company_id: company.company_id,
+        agent_name: agent.name,
+        definition_id: agent.definitionId,
+        tinyfish_run_id: queued.run_id,
+        status: queued.status,
+        error: queued.error,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("company_agent_runs").insert(payload);
+      if (error) {
+        throw new Error(`Failed to create company agent run: ${error.message}`);
+      }
+    }),
+  );
+
+  return {
+    companyRunId,
+    companyId: company.company_id,
+    agentCount: agents.length,
+  };
+}
+
+export async function pollCompanyAgents(
+  companyRunId: string,
+): Promise<PolledCompanyAgents> {
+  const companyRun = await getCompanyPipelineRun(companyRunId);
+  if (!companyRun) {
+    throw new Error(`Company pipeline run ${companyRunId} not found`);
+  }
+
+  const supabase = createAdminClient();
+  const agentRuns = await listCompanyAgentRuns(companyRunId);
+
+  await Promise.all(
+    agentRuns.map(async (agentRun) => {
+      if (agentRun.status === "completed" || agentRun.status === "failed" || agentRun.status === "canceled") {
+        return;
+      }
+
+      if (!agentRun.tinyfish_run_id) {
+        const { error } = await supabase
+          .from("company_agent_runs")
+          .update({
+            status: "failed",
+            error: { code: "MISSING_RUN_ID", message: "TinyFish run ID is missing" },
+            completed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("agent_run_id", agentRun.agent_run_id);
+
+        if (error) {
+          throw new Error(`Failed to mark missing TinyFish run ID: ${error.message}`);
+        }
+        return;
+      }
+
+      let status;
+      try {
+        status = await getTinyfishRun(agentRun.tinyfish_run_id);
+      } catch (error) {
+        console.warn(
+          "[PIPELINE] Failed to poll TinyFish run %s: %s",
+          agentRun.tinyfish_run_id,
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
+
+      const nextStatus = status.status;
+      if (nextStatus === "completed") {
+        const parsed = parseTinyfishFindings(status.result, agentRun.definition_id);
+        if (parsed.error) {
+          const { error } = await supabase
+            .from("company_agent_runs")
+            .update({
+              status: "failed",
+              error: { code: "MALFORMED_RESULT", message: parsed.error },
+              completed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq("agent_run_id", agentRun.agent_run_id);
+
+          if (error) {
+            throw new Error(`Failed to persist malformed TinyFish result: ${error.message}`);
+          }
+          return;
+        }
+
+        const { error } = await supabase
+          .from("company_agent_runs")
+          .update({
+            status: "completed",
+            findings: parsed.findings,
+            error: null,
+            completed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("agent_run_id", agentRun.agent_run_id);
+
+        if (error) {
+          throw new Error(`Failed to persist completed TinyFish run: ${error.message}`);
+        }
+        return;
+      }
+
+      if (nextStatus === "failed" || nextStatus === "canceled") {
+        const { error } = await supabase
+          .from("company_agent_runs")
+          .update({
+            status: nextStatus,
+            error: status.error,
+            completed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("agent_run_id", agentRun.agent_run_id);
+
+        if (error) {
+          throw new Error(`Failed to persist failed TinyFish run: ${error.message}`);
+        }
+        return;
+      }
+
+      const { error } = await supabase
+        .from("company_agent_runs")
+        .update({
+          status: nextStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("agent_run_id", agentRun.agent_run_id);
+
+      if (error) {
+        throw new Error(`Failed to persist TinyFish run status: ${error.message}`);
+      }
+    }),
+  );
+
+  const refreshedRuns = await listCompanyAgentRuns(companyRunId);
+  const pendingCount = refreshedRuns.filter(
+    (run) => run.status === "queued" || run.status === "running",
+  ).length;
+  const completedCount = refreshedRuns.filter((run) => run.status === "completed").length;
+  const failedCount = refreshedRuns.filter(
+    (run) => run.status === "failed" || run.status === "canceled",
+  ).length;
+
+  return {
+    companyRunId,
+    companyId: companyRun.company_id,
+    terminal: pendingCount === 0,
+    pendingCount,
+    completedCount,
+    failedCount,
+  };
+}
+
+export async function finalizeCompanyAgents(
+  companyRunId: string,
+): Promise<FinalizedCompanyRun> {
+  const companyRun = await getCompanyPipelineRun(companyRunId);
+  if (!companyRun) {
+    throw new Error(`Company pipeline run ${companyRunId} not found`);
+  }
+
+  const company = await getCompanyById(companyRun.company_id);
+  if (!company) {
+    const errorMessage = `Company ${companyRun.company_id} not found`;
+    await markCompanyRunState(companyRunId, {
+      status: "failed",
+      completed_at: new Date().toISOString(),
+      error: errorMessage,
+    });
+
+    return {
+      companyRunId,
+      companyId: companyRun.company_id,
+      status: "failed",
+      signalCount: 0,
+      error: errorMessage,
+    };
+  }
+
+  const agentRuns = await listCompanyAgentRuns(companyRunId);
+  const pendingCount = agentRuns.filter(
+    (run) => run.status === "queued" || run.status === "running",
+  ).length;
+
+  if (pendingCount > 0) {
+    throw new Error(`Company run ${companyRunId} still has ${pendingCount} active agent runs`);
+  }
+
+  const definitions = await getSignalDefinitions(company.company_id);
+  const completedRuns = agentRuns.filter((run) => run.status === "completed");
+  const failedRuns = agentRuns.filter(
+    (run) => run.status === "failed" || run.status === "canceled",
+  );
+  const findings = completedRuns.flatMap((run) =>
+    Array.isArray(run.findings) ? (run.findings as SignalFinding[]) : [],
+  );
+
+  if (completedRuns.length > 0 || agentRuns.length === 0) {
+    const result = await persistCompanyFindings(
+      company,
+      definitions,
+      toReportTrigger(companyRun.requested_source),
+      findings,
+    );
+
+    await markCompanyRunState(companyRunId, {
+      status: "completed",
+      report_id: result.reportId ?? null,
+      signal_count: result.signalCount,
+      error: null,
+      completed_at: new Date().toISOString(),
+    });
+
+    return {
+      companyRunId,
+      companyId: company.company_id,
+      status: "completed",
+      signalCount: result.signalCount,
+      reportId: result.reportId,
+    };
+  }
+
+  const errorMessage =
+    failedRuns
+      .map((run) => readAgentErrorMessage(run.error))
+      .filter(Boolean)
+      .slice(0, 3)
+      .join(" | ") || "All TinyFish agent runs failed";
+
+  await markCompanyRunState(companyRunId, {
+    status: "failed",
+    signal_count: 0,
+    report_id: null,
+    error: errorMessage,
+    completed_at: new Date().toISOString(),
+  });
+
+  return {
+    companyRunId,
+    companyId: company.company_id,
+    status: "failed",
+    signalCount: 0,
+    error: errorMessage,
+  };
 }

@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
     company_id?: string;
     company_ids?: string[];
     recipient_user_ids?: string[];
+    request_key?: string;
   } = {};
   try {
     body = await request.json();
@@ -32,16 +33,19 @@ export async function POST(request: NextRequest) {
 
   try {
     if (isCronRequest) {
-      await enqueuePipelineRequestedEvent({
-        source: "manual",
+      const queued = await enqueuePipelineRequestedEvent({
+        source: "cron",
+        requestKey: body.request_key,
         companyIds: ids,
       });
 
       return NextResponse.json(
         {
           status: "queued",
-          source: "manual",
-          requested_company_count: ids?.length ?? null,
+          source: "cron",
+          requestId: queued.requestId,
+          requestKey: queued.requestKey,
+          requestedCompanyCount: ids?.length ?? null,
         },
         { status: 202 },
       );
@@ -76,8 +80,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await enqueuePipelineRequestedEvent({
+    const queued = await enqueuePipelineRequestedEvent({
       source: "manual",
+      requestKey: body.request_key,
       companyIds: ids,
       organizationId,
       requestedByUserId: user.userId,
@@ -88,7 +93,9 @@ export async function POST(request: NextRequest) {
       {
         status: "queued",
         source: "manual",
-        requested_company_count: ids?.length ?? null,
+        requestId: queued.requestId,
+        requestKey: queued.requestKey,
+        requestedCompanyCount: ids?.length ?? null,
       },
       { status: 202 },
     );

@@ -270,9 +270,14 @@ export interface CompanyPipelineResult {
   findings: SignalFinding[];
 }
 
+export type DigestCompanyStatus = 'changed' | 'no_change' | 'failed';
+
 export interface DigestCompany {
   company: Company;
   findings: SignalFinding[];
+  status: DigestCompanyStatus;
+  reportId?: string;
+  error?: string;
 }
 
 export interface CompetitorLink {

@@ -99,7 +99,53 @@ export interface UserSettings {
 export interface TriggerPipelineResponse {
   status: "queued";
   source: "manual";
-  requested_company_count: number | null;
+  requestId: string | null;
+  requestKey: string | null;
+  requestedCompanyCount: number | null;
+}
+
+export interface PipelineRequestCompanySummary {
+  companyId: string;
+  companyName: string;
+  status: "queued" | "running" | "waiting_for_rerun" | "completed" | "failed";
+  signalCount: number;
+  reportId: string | null;
+  error: string | null;
+}
+
+export interface PipelineRequestDeliverySummary {
+  orgId: string;
+  email: string;
+  sentAt: string | null;
+}
+
+export interface PipelineRequestSnapshot {
+  requestId: string;
+  requestKey: string | null;
+  source: "manual" | "cron" | "refresh";
+  status: "queued" | "running" | "finalizing" | "completed" | "completed_with_errors";
+  requestedCompanyCount: number;
+  organizationId: string | null;
+  requestedByUserId: string | null;
+  recipientUserIds: string[] | null;
+  allCompaniesTerminal: boolean;
+  previewAvailable: boolean;
+  hadCompanyFailures: boolean;
+  companies: PipelineRequestCompanySummary[];
+  deliveries: PipelineRequestDeliverySummary[];
+}
+
+export interface PipelineRequestPreview {
+  subject: string;
+  html: string;
+}
+
+function generateRequestKey(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `manual-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +262,7 @@ export async function untrackCompany(id: string): Promise<void> {
 export async function triggerManualPipelineRun(input: {
   companyIds: string[];
   recipientUserIds?: string[];
+  requestKey?: string;
 }): Promise<TriggerPipelineResponse> {
   const companyIds = input.companyIds.filter(Boolean);
   if (companyIds.length === 0) {
@@ -226,9 +273,12 @@ export async function triggerManualPipelineRun(input: {
     company_id?: string;
     company_ids?: string[];
     recipient_user_ids?: string[];
+    request_key?: string;
   } = companyIds.length === 1
     ? { company_id: companyIds[0] }
     : { company_ids: companyIds };
+
+  payload.request_key = input.requestKey ?? generateRequestKey();
 
   if (input.recipientUserIds?.length) {
     payload.recipient_user_ids = input.recipientUserIds;
@@ -263,6 +313,27 @@ export async function previewReportEmail(reportId: string): Promise<string> {
   return res.text();
 }
 
+export async function getPipelineRequest(
+  requestId: string,
+): Promise<PipelineRequestSnapshot> {
+  const res = await authFetch(`${API_BASE}/pipeline-requests/${requestId}`);
+  await requireOk(res, "Failed to fetch pipeline request");
+  return res.json();
+}
+
+export async function previewPipelineRequestEmail(
+  requestId: string,
+): Promise<PipelineRequestPreview> {
+  const res = await authFetch(`${API_BASE}/pipeline-requests/${requestId}?preview=true`);
+  await requireOk(res, "Failed to preview pipeline request email");
+  const encodedSubject = res.headers.get("x-digest-subject") ?? "";
+
+  return {
+    subject: encodedSubject ? decodeURIComponent(encodedSubject) : "",
+    html: await res.text(),
+  };
+}
+
 export async function getReports(companyId?: string): Promise<Report[]> {
   const url = companyId
     ? `${API_BASE}/reports?company_id=${companyId}`
@@ -295,6 +366,7 @@ export async function getComparisonSignals(
   params.set("company_ids", companyIds.join(","));
   params.set("limit", String(limit));
   const res = await authFetch(`${API_BASE}/signals?${params}`);
+  await requireOk(res, "Failed to load comparison signals");
   return res.json();
 }
 
@@ -302,6 +374,7 @@ export async function getCompetitors(
   companyId: string,
 ): Promise<{ competitors: CompetitorLink[]; suggestions: Company[] }> {
   const res = await authFetch(`${API_BASE}/companies/${companyId}/competitors`);
+  await requireOk(res, "Failed to load competitors");
   return res.json();
 }
 
@@ -316,6 +389,7 @@ export async function addCompetitor(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
+  await requireOk(res, "Failed to add competitor");
   return res.json();
 }
 
@@ -323,7 +397,7 @@ export async function removeCompetitor(
   companyId: string,
   competitorCompanyId: string,
 ): Promise<void> {
-  await authFetch(
+  const res = await authFetch(
     `${API_BASE}/companies/${companyId}/competitors?competitor_company_id=${encodeURIComponent(
       competitorCompanyId,
     )}`,
@@ -331,6 +405,7 @@ export async function removeCompetitor(
       method: "DELETE",
     },
   );
+  await requireOk(res, "Failed to remove competitor");
 }
 
 // ---------------------------------------------------------------------------

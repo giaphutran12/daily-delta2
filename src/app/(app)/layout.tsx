@@ -23,6 +23,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
+  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import {
   DropdownMenu,
@@ -58,7 +59,14 @@ function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-sidebar-border group-data-[collapsible=icon]:border-none">
         <div className="flex h-8 items-center gap-2 px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <Image src="/logo.png" alt="Daily Delta" width={20} height={20} className="h-5 w-5 shrink-0" />
+          <Image
+            src="/logo.png"
+            alt="Daily Delta"
+            width={20}
+            height={20}
+            className="h-5 w-5 shrink-0"
+            unoptimized
+          />
           <span className="text-lg text-muted-foreground group-data-[collapsible=icon]:hidden">/</span>
           <span className="text-sm font-semibold leading-none truncate group-data-[collapsible=icon]:hidden">
             {currentOrg?.name ?? "Daily Delta"}
@@ -132,7 +140,7 @@ function AppSidebar() {
 }
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, currentOrg } = useAuth();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -163,6 +171,20 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <AppSidebar />
       </div>
       <SidebarInset>
+        <header className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur md:hidden">
+          <SidebarTrigger
+            aria-label="Open navigation"
+            title="Open navigation"
+            size="icon-lg"
+            className="shrink-0"
+          />
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">
+              {currentOrg?.name ?? "Daily Delta"}
+            </p>
+            <p className="text-xs text-muted-foreground">Navigation</p>
+          </div>
+        </header>
         <main className="flex-1 p-4">{children}</main>
       </SidebarInset>
     </SidebarProvider>

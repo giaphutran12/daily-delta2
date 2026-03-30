@@ -74,6 +74,7 @@ function LoginForm() {
             width={48}
             height={48}
             className="size-12"
+            unoptimized
           />
         </div>
         <Card>
