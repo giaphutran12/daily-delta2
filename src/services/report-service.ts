@@ -5,6 +5,7 @@ import {
   ReportSignal,
   ReportSection,
   Company,
+  DigestCompany,
   SignalFinding,
   SignalDefinition,
 } from "@/lib/types";
@@ -243,6 +244,51 @@ export async function getAllReports(
   } catch {
     return [];
   }
+}
+
+export async function getDigestCompaniesForReports(
+  reportIds: string[],
+): Promise<DigestCompany[]> {
+  if (reportIds.length === 0) return [];
+
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("reports")
+    .select("*, companies(*)")
+    .in("report_id", reportIds)
+    .order("generated_at", { ascending: true });
+
+  if (error || !data) return [];
+
+  const reportOrder = new Map(reportIds.map((reportId, index) => [reportId, index]));
+
+  return (data as Array<Record<string, unknown>>)
+    .sort(
+      (a, b) =>
+        (reportOrder.get(a.report_id as string) ?? Number.MAX_SAFE_INTEGER) -
+        (reportOrder.get(b.report_id as string) ?? Number.MAX_SAFE_INTEGER),
+    )
+    .map((row) => {
+      const report = rowToReport(row);
+      const company = row.companies as Company;
+
+      const findings: SignalFinding[] = report.report_data.sections.flatMap(
+        (section) =>
+          section.items.map((item) => ({
+            signal_type: section.signal_type,
+            title: item.title,
+            summary: item.summary,
+            source: item.source,
+            url: item.url,
+            detected_at: item.detected_at,
+          })),
+      );
+
+      return {
+        company,
+        findings,
+      };
+    });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

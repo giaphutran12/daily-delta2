@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { runPipeline } from "@/services/pipeline-service";
+import { enqueuePipelineRequestedEvent } from "@/services/pipeline-request-service";
 
 export const maxDuration = 800;
 
@@ -22,12 +22,16 @@ export async function POST(request: NextRequest) {
   console.log("[PIPELINE] Trigger received, companies:", ids ? ids.length + " specified" : "(all)");
 
   try {
-    const result = await runPipeline(ids);
+    await enqueuePipelineRequestedEvent("manual", ids);
 
-    return NextResponse.json({
-      status: result.companiesProcessed > 0 ? "completed" : "no-op",
-      ...result,
-    });
+    return NextResponse.json(
+      {
+        status: "queued",
+        source: "manual",
+        requested_company_count: ids?.length ?? null,
+      },
+      { status: 202 },
+    );
   } catch (error) {
     console.error("[PIPELINE] Fatal error:", error);
     return NextResponse.json(
