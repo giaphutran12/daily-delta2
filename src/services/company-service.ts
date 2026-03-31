@@ -4,6 +4,10 @@ import {
   normalizeUrl,
   extractCompanyName,
 } from "@/lib/utils/domain";
+import {
+  rankCompaniesBySearch,
+  tokenizeCompanySearchText,
+} from "@/lib/utils/company-search";
 import type { Company, DiscoveryResult, TrackedCompany } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -58,7 +62,7 @@ export async function addCompanyToPlatform(
  */
 export async function searchCompanyCatalog(
   query?: string,
-  filters?: { industry?: string },
+  filters?: { industry?: string; excludeCompanyIds?: string[] },
   limit = 50,
   offset = 0,
 ): Promise<{ companies: Company[]; total: number }> {
@@ -71,17 +75,27 @@ export async function searchCompanyCatalog(
     .order("company_name", { ascending: true });
 
   if (query && query.trim().length > 0) {
-    const q = query.trim();
-    dbQuery = dbQuery.or(
-      `company_name.ilike.%${q}%,domain.ilike.%${q}%,description.ilike.%${q}%,industry.ilike.%${q}%`,
-    );
+    const tokens = tokenizeCompanySearchText(query);
+    const orClauses = [...new Set(tokens)].flatMap((token) => [
+      `company_name.ilike.%${token}%`,
+      `domain.ilike.%${token}%`,
+      `website_url.ilike.%${token}%`,
+    ]);
+
+    if (orClauses.length > 0) {
+      dbQuery = dbQuery.or(orClauses.join(","));
+    }
   }
 
   if (filters?.industry) {
     dbQuery = dbQuery.ilike("industry", `%${filters.industry}%`);
   }
 
-  dbQuery = dbQuery.range(offset, offset + limit - 1);
+  const fetchCount = query?.trim().length
+    ? Math.max(offset + limit, 250)
+    : offset + limit;
+
+  dbQuery = dbQuery.range(0, fetchCount - 1);
 
   const { data, error, count } = await dbQuery;
 
@@ -89,9 +103,15 @@ export async function searchCompanyCatalog(
     console.error("[CATALOG] Search failed:", error.message, error.code, error.details);
     throw new Error(`Failed to search catalog: ${error.message}`);
   }
+  const excludedIds = new Set(filters?.excludeCompanyIds ?? []);
+  const candidates = ((data ?? []) as Company[]).filter(
+    (company) => !excludedIds.has(company.company_id),
+  );
+  const ranked = rankCompaniesBySearch(candidates, query);
+
   return {
-    companies: (data ?? []) as Company[],
-    total: count ?? 0,
+    companies: ranked.slice(offset, offset + limit),
+    total: query?.trim().length ? ranked.length : count ?? ranked.length,
   };
 }
 

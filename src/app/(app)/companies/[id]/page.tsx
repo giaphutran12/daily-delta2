@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -28,6 +28,10 @@ import {
   type TrackedCompany,
 } from "@/lib/api/client";
 import type { CompetitorLink, SignalDefinition, Signal } from "@/lib/types";
+import {
+  isExactEnoughCompanyMatch,
+  looksLikeWebsiteQuery,
+} from "@/lib/utils/company-search";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +60,10 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { CompanyChat } from "@/components/CompanyChat";
+import {
+  EntitySearchCombobox,
+  type EntitySearchOption,
+} from "@/components/entity-search-combobox";
 
 // --- Helpers ---
 
@@ -211,9 +219,12 @@ export default function CompanyDetailPage() {
   const [competitors, setCompetitors] = useState<CompetitorLink[]>([]);
   const [suggestions, setSuggestions] = useState<TrackedCompany[]>([]);
   const [competitorsLoading, setCompetitorsLoading] = useState(true);
-  const [competitorWebsite, setCompetitorWebsite] = useState("");
+  const [competitorQuery, setCompetitorQuery] = useState("");
   const [competitorSaving, setCompetitorSaving] = useState(false);
+  const [competitorSearchLoading, setCompetitorSearchLoading] = useState(false);
   const [competitorMessage, setCompetitorMessage] = useState<string | null>(null);
+  const competitorSearchDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const competitorSearchReadyRef = useRef(false);
 
   // Signal definitions state
   const [signalDefs, setSignalDefs] = useState<SignalDefinition[]>([]);
@@ -249,6 +260,7 @@ export default function CompanyDetailPage() {
 
   useEffect(() => {
     if (!currentOrg || !companyId) return;
+    competitorSearchReadyRef.current = false;
     setCompetitorsLoading(true);
     getCompetitors(companyId)
       .then((result) => {
@@ -259,8 +271,26 @@ export default function CompanyDetailPage() {
         setCompetitors([]);
         setSuggestions([]);
       })
-      .finally(() => setCompetitorsLoading(false));
+      .finally(() => {
+        competitorSearchReadyRef.current = true;
+        setCompetitorsLoading(false);
+      });
   }, [currentOrg, companyId]);
+
+  useEffect(() => {
+    if (!currentOrg || !companyId || !competitorSearchReadyRef.current) return;
+    clearTimeout(competitorSearchDebounceRef.current);
+    setCompetitorSearchLoading(true);
+
+    competitorSearchDebounceRef.current = setTimeout(() => {
+      getCompetitors(companyId, competitorQuery.trim() || undefined)
+        .then((result) => setSuggestions(result.suggestions as TrackedCompany[]))
+        .catch(() => setSuggestions([]))
+        .finally(() => setCompetitorSearchLoading(false));
+    }, 250);
+
+    return () => clearTimeout(competitorSearchDebounceRef.current);
+  }, [currentOrg, companyId, competitorQuery]);
 
   useEffect(() => {
     if (!compareMode || competitors.length === 0) {
@@ -350,7 +380,7 @@ export default function CompanyDetailPage() {
       setCompetitors(next.competitors);
       setSuggestions(next.suggestions as TrackedCompany[]);
       setCompareMode(true);
-      setCompetitorWebsite("");
+      setCompetitorQuery("");
       setCompetitorMessage(
         result.refreshQueued
           ? `${result.competitor.company_name} was added. Fresh signals are being prepared now.`
@@ -373,6 +403,33 @@ export default function CompanyDetailPage() {
     if (next.competitors.length === 0) {
       setCompareMode(false);
     }
+  };
+
+  const competitorOptions: EntitySearchOption<TrackedCompany>[] = suggestions.map(
+    (company) => ({
+      id: company.company_id,
+      label: company.company_name,
+      subtitle: `${company.domain}${company.industry ? ` · ${company.industry}` : ""}`,
+      value: company,
+    }),
+  );
+
+  const handleSubmitCompetitorQuery = async (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+
+    const topSuggestion = suggestions[0];
+    if (topSuggestion && isExactEnoughCompanyMatch(topSuggestion, trimmed)) {
+      await handleAddCompetitor({ competitor_company_id: topSuggestion.company_id });
+      return;
+    }
+
+    if (looksLikeWebsiteQuery(trimmed)) {
+      await handleAddCompetitor({ website_url: trimmed });
+      return;
+    }
+
+    setCompetitorMessage(`No matching company found for "${trimmed}".`);
   };
 
   const handleManualRun = async () => {
@@ -549,49 +606,38 @@ export default function CompanyDetailPage() {
               ))}
             </div>
 
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <Input
-                value={competitorWebsite}
-                onChange={(e) => setCompetitorWebsite(e.target.value)}
-                placeholder="Add competitor by website, e.g. https://google.com"
-              />
-              <Button
-                disabled={!competitorWebsite.trim() || competitorSaving}
-                onClick={() =>
-                  void handleAddCompetitor({ website_url: competitorWebsite.trim() })
+            <div className="mt-4">
+              <EntitySearchCombobox
+                query={competitorQuery}
+                onQueryChange={setCompetitorQuery}
+                options={competitorOptions}
+                loading={competitorSearchLoading}
+                disabled={competitorSaving}
+                placeholder="Search competitor by company name or website"
+                emptyMessage={
+                  competitorQuery.trim()
+                    ? `No companies match "${competitorQuery.trim()}".`
+                    : "No competitor suggestions yet."
                 }
-              >
-                {competitorSaving ? "Adding..." : "Add competitor"}
-              </Button>
+                submitLabel={competitorSaving ? "Adding..." : "Add competitor"}
+                onSelectOption={(option) =>
+                  handleAddCompetitor({
+                    competitor_company_id: option.value.company_id,
+                  })
+                }
+                onSubmitQuery={handleSubmitCompetitorQuery}
+              />
             </div>
 
             {competitorMessage && (
               <p className="mt-2 text-xs text-muted-foreground">{competitorMessage}</p>
             )}
 
-            {!competitorsLoading && suggestions.length > 0 && (
-              <div className="mt-4">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Suggested competitors
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {suggestions.slice(0, 6).map((suggestion) => (
-                    <Button
-                      key={suggestion.company_id}
-                      size="sm"
-                      variant="outline"
-                      onClick={() =>
-                        void handleAddCompetitor({
-                          competitor_company_id: suggestion.company_id,
-                        })
-                      }
-                    >
-                      {suggestion.company_name}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {!competitorsLoading ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Start typing to see suggestions. Press Enter to add the top exact-enough match or a website.
+              </p>
+            ) : null}
           </div>
 
           {(compareMode ? comparisonLoading : timelineLoading) ? (

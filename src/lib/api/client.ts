@@ -246,6 +246,7 @@ export async function searchCatalog(
   params.set("offset", String(offset));
 
   const res = await authFetch(`${API_BASE}/companies/catalog?${params}`);
+  await requireOk(res, "Failed to search company catalog");
   return res.json();
 }
 
@@ -372,8 +373,16 @@ export async function getComparisonSignals(
 
 export async function getCompetitors(
   companyId: string,
+  query?: string,
 ): Promise<{ competitors: CompetitorLink[]; suggestions: Company[] }> {
-  const res = await authFetch(`${API_BASE}/companies/${companyId}/competitors`);
+  const params = new URLSearchParams();
+  if (query?.trim()) {
+    params.set("q", query.trim());
+  }
+
+  const res = await authFetch(
+    `${API_BASE}/companies/${companyId}/competitors${params.size ? `?${params}` : ""}`,
+  );
   await requireOk(res, "Failed to load competitors");
   return res.json();
 }
