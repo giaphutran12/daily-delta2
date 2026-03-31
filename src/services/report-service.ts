@@ -345,43 +345,45 @@ export async function getDigestCompaniesForOutcomes(
     }),
   );
 
-  return outcomes.flatMap((outcome) => {
-    const company = companyById.get(outcome.companyId);
-    if (!company) return [];
+  return outcomes
+    .flatMap((outcome) => {
+      const company = companyById.get(outcome.companyId);
+      if (!company) return [];
 
-    const report =
-      outcome.reportId && reportById.has(outcome.reportId)
-        ? reportById.get(outcome.reportId)!
-        : null;
+      const report =
+        outcome.reportId && reportById.has(outcome.reportId)
+          ? reportById.get(outcome.reportId)!
+          : null;
 
-    const findings: SignalFinding[] = report
-      ? report.report_data.sections.flatMap((section) =>
-          section.items.map((item) => ({
-            signal_type: section.signal_type,
-            title: item.title,
-            summary: item.summary,
-            source: item.source,
-            url: item.url,
-            detected_at: item.detected_at,
-          })),
-        )
-      : [];
+      const findings: SignalFinding[] = report
+        ? report.report_data.sections.flatMap((section) =>
+            section.items.map((item) => ({
+              signal_type: section.signal_type,
+              title: item.title,
+              summary: item.summary,
+              source: item.source,
+              url: item.url,
+              detected_at: item.detected_at,
+            })),
+          )
+        : [];
 
-    return [
-      {
-        company,
-        findings,
-        status:
-          outcome.status === "failed"
-            ? ("failed" as const)
-            : outcome.reportId && outcome.signalCount > 0
-              ? ("changed" as const)
-              : ("no_change" as const),
-        reportId: outcome.reportId ?? undefined,
-        error: outcome.error ?? undefined,
-      },
-    ];
-  });
+      return [
+        {
+          company,
+          findings,
+          status:
+            outcome.status === "failed"
+              ? ("failed" as const)
+              : outcome.reportId && outcome.signalCount > 0
+                ? ("changed" as const)
+                : ("no_change" as const),
+          reportId: outcome.reportId ?? undefined,
+          error: outcome.error ?? undefined,
+        },
+      ];
+    })
+    .sort((a, b) => a.company.company_name.localeCompare(b.company.company_name));
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

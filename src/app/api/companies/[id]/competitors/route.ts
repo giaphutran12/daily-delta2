@@ -62,6 +62,7 @@ async function refreshCompetitorCompany(
 export const GET = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
   const companyId = extractCompanyId(req);
   const company = await getCompanyById(companyId);
+  const query = req.nextUrl.searchParams.get("q") ?? undefined;
 
   if (!company) {
     return Response.json({ error: "Company not found" }, { status: 404 });
@@ -74,7 +75,7 @@ export const GET = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
 
   const [competitors, suggestions] = await Promise.all([
     getCompetitors(ctx.organizationId, companyId),
-    getCompetitorSuggestions(company, ctx.organizationId),
+    getCompetitorSuggestions(company, ctx.organizationId, query, 8),
   ]);
 
   return Response.json({

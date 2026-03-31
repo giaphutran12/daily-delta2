@@ -57,6 +57,7 @@ interface PipelineRequestCompanyRow {
   report_id: string | null;
   signal_count: number;
   error: string | null;
+  created_at?: string;
 }
 
 interface CompanyPipelineRunRow {
@@ -189,6 +190,10 @@ function dedupeIds(ids?: string[]): string[] | undefined {
   return [...new Set(ids.filter(Boolean))];
 }
 
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 function normalizeManualRecipientUserIds(
   requestedByUserId?: string,
   recipientUserIds?: string[],
@@ -229,7 +234,8 @@ async function getOrgRecipientEmails(
   const recipients = await Promise.all(
     activeMembers.map(async (member) => {
       const settings = await getUserSettings(member.user_id);
-      const email = settings.email || member.email || null;
+      const rawEmail = settings.email || member.email || null;
+      const email = rawEmail ? normalizeEmail(rawEmail) : null;
       return email
         ? {
             email,
@@ -274,7 +280,8 @@ async function getScopedManualRecipientEmails(
     targetUserIds.map(async (userId) => {
       const member = memberByUserId.get(userId)!;
       const settings = await getUserSettings(userId);
-      return settings.email || member.email || null;
+      const rawEmail = settings.email || member.email || null;
+      return rawEmail ? normalizeEmail(rawEmail) : null;
     }),
   );
 
@@ -481,9 +488,10 @@ async function listRequestCompanies(
   const { data, error } = await supabase
     .from("pipeline_request_companies")
     .select(
-      "request_company_id, request_id, company_id, company_run_id, status, report_id, signal_count, error",
+      "request_company_id, request_id, company_id, company_run_id, status, report_id, signal_count, error, created_at",
     )
-    .eq("request_id", requestId);
+    .eq("request_id", requestId)
+    .order("created_at", { ascending: true });
 
   if (error) {
     throw new Error(`Failed to load request companies: ${error.message}`);
@@ -1166,10 +1174,11 @@ async function getLastSentDigestAt(
   source: PipelineRequestSource,
 ): Promise<string | null> {
   const supabase = createAdminClient();
+  const normalizedRecipientEmail = normalizeEmail(recipientEmail);
   const { data, error } = await supabase
     .from("pipeline_request_deliveries")
     .select("sent_at, pipeline_requests!inner(source)")
-    .eq("recipient_email", recipientEmail)
+    .ilike("recipient_email", normalizedRecipientEmail)
     .eq("pipeline_requests.source", source)
     .not("sent_at", "is", null)
     .order("sent_at", { ascending: false })
@@ -1190,8 +1199,9 @@ async function ensurePipelineRequestDeliveries(
   if (recipientEmails.length === 0) return;
 
   const supabase = createAdminClient();
+  const normalizedRecipientEmails = [...new Set(recipientEmails.map(normalizeEmail))];
   await Promise.all(
-    recipientEmails.map(async (recipientEmail) => {
+    normalizedRecipientEmails.map(async (recipientEmail) => {
       const { error } = await supabase.from("pipeline_request_deliveries").insert({
         request_id: requestId,
         recipient_email: recipientEmail,
@@ -1210,11 +1220,12 @@ async function getPipelineRequestDelivery(
   recipientEmail: string,
 ): Promise<PipelineRequestDeliveryRow | null> {
   const supabase = createAdminClient();
+  const normalizedRecipientEmail = normalizeEmail(recipientEmail);
   const { data, error } = await supabase
     .from("pipeline_request_deliveries")
     .select("delivery_id, request_id, recipient_email, sent_at")
     .eq("request_id", requestId)
-    .eq("recipient_email", recipientEmail)
+    .ilike("recipient_email", normalizedRecipientEmail)
     .maybeSingle();
 
   if (error) {
@@ -1233,21 +1244,25 @@ async function listPipelineRequestDeliveries(
   }
 
   const supabase = createAdminClient();
-  let query = supabase
+  const query = supabase
     .from("pipeline_request_deliveries")
     .select("delivery_id, request_id, recipient_email, sent_at")
     .eq("request_id", requestId);
-
-  if (recipientEmails) {
-    query = query.in("recipient_email", recipientEmails);
-  }
 
   const { data, error } = await query;
   if (error) {
     throw new Error(`Failed to list pipeline deliveries: ${error.message}`);
   }
 
-  return (data ?? []) as PipelineRequestDeliveryRow[];
+  const deliveries = (data ?? []) as PipelineRequestDeliveryRow[];
+  if (!recipientEmails) {
+    return deliveries;
+  }
+
+  const normalizedRecipients = new Set(recipientEmails.map(normalizeEmail));
+  return deliveries.filter((delivery) =>
+    normalizedRecipients.has(normalizeEmail(delivery.recipient_email)),
+  );
 }
 
 async function markPipelineRequestDeliverySent(
@@ -1255,6 +1270,7 @@ async function markPipelineRequestDeliverySent(
   recipientEmail: string,
 ): Promise<void> {
   const supabase = createAdminClient();
+  const normalizedRecipientEmail = normalizeEmail(recipientEmail);
   const { error } = await supabase
     .from("pipeline_request_deliveries")
     .update({
@@ -1262,7 +1278,7 @@ async function markPipelineRequestDeliverySent(
       updated_at: new Date().toISOString(),
     })
     .eq("request_id", requestId)
-    .eq("recipient_email", recipientEmail)
+    .ilike("recipient_email", normalizedRecipientEmail)
     .is("sent_at", null);
 
   if (error) {
@@ -1454,6 +1470,11 @@ export async function getPipelineRequestSnapshot(
   const hadCompanyFailures = scopedRequestCompanies.some(
     (row) => row.status === "failed" || !!row.error,
   );
+  const sortedCompanies = [...scopedRequestCompanies].sort((a, b) => {
+    const aName = companyById.get(a.company_id) ?? "Unknown company";
+    const bName = companyById.get(b.company_id) ?? "Unknown company";
+    return aName.localeCompare(bName);
+  });
 
   let deliveries: PipelineRequestDeliverySummary[] = [];
   if (allCompaniesTerminal) {
@@ -1509,7 +1530,7 @@ export async function getPipelineRequestSnapshot(
     allCompaniesTerminal,
     previewAvailable: allCompaniesTerminal && scopedRequestCompanies.length > 0,
     hadCompanyFailures,
-    companies: scopedRequestCompanies.map((row) => ({
+    companies: sortedCompanies.map((row) => ({
       companyId: row.company_id,
       companyName: companyById.get(row.company_id) ?? "Unknown company",
       status: row.status,
@@ -1558,33 +1579,34 @@ export async function previewPipelineRequestDigest(
 export async function sendPipelineDigestDelivery(
   delivery: PipelineDigestDelivery,
 ): Promise<{ email: string; sent: boolean }> {
+  const normalizedEmail = normalizeEmail(delivery.email);
   if (delivery.outcomes.length === 0) {
-    return { email: delivery.email, sent: false };
+    return { email: normalizedEmail, sent: false };
   }
 
-  await ensurePipelineRequestDeliveries(delivery.requestId, [delivery.email]);
+  await ensurePipelineRequestDeliveries(delivery.requestId, [normalizedEmail]);
   const existingDelivery = await getPipelineRequestDelivery(
     delivery.requestId,
-    delivery.email,
+    normalizedEmail,
   );
 
   if (existingDelivery?.sent_at) {
-    return { email: delivery.email, sent: true };
+    return { email: normalizedEmail, sent: true };
   }
 
   const digestCompanies = await getDigestCompaniesForOutcomes(delivery.outcomes);
   if (digestCompanies.length === 0) {
-    return { email: delivery.email, sent: false };
+    return { email: normalizedEmail, sent: false };
   }
 
-  const sent = await sendDigestEmail(delivery.email, digestCompanies, {
-    idempotencyKey: `pipeline-request:${delivery.requestId}:${delivery.email}`,
+  const sent = await sendDigestEmail(normalizedEmail, digestCompanies, {
+    idempotencyKey: `pipeline-request:${delivery.requestId}:${normalizedEmail}`,
   });
   if (sent) {
-    await markPipelineRequestDeliverySent(delivery.requestId, delivery.email);
+    await markPipelineRequestDeliverySent(delivery.requestId, normalizedEmail);
   }
 
-  return { email: delivery.email, sent };
+  return { email: normalizedEmail, sent };
 }
 
 export async function markPipelineRequestFinalized(

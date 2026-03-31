@@ -84,17 +84,22 @@ export async function removeCompetitor(
 export async function getCompetitorSuggestions(
   company: Company,
   organizationId: string,
+  query?: string,
+  limit = 12,
 ): Promise<Company[]> {
   const competitors = await getCompetitors(organizationId, company.company_id);
   const existingIds = new Set(competitors.map((entry) => entry.competitor_company_id));
   existingIds.add(company.company_id);
 
   const result = await searchCompanyCatalog(
-    undefined,
-    { industry: company.industry ?? undefined },
-    12,
+    query,
+    {
+      industry: query?.trim() ? undefined : company.industry ?? undefined,
+      excludeCompanyIds: [...existingIds],
+    },
+    limit,
     0,
   );
 
-  return result.companies.filter((candidate) => !existingIds.has(candidate.company_id));
+  return result.companies;
 }

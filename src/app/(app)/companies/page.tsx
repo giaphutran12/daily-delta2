@@ -15,6 +15,11 @@ import {
   type Company,
   type OrganizationMember,
 } from "@/lib/api/client";
+import {
+  companyMatchesSearchQuery,
+  isExactEnoughCompanyMatch,
+  looksLikeWebsiteQuery,
+} from "@/lib/utils/company-search";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -38,9 +43,14 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  EntitySearchCombobox,
+  type EntitySearchOption,
+} from "@/components/entity-search-combobox";
+import { SearchInput } from "@/components/search-input";
 
 const SKELETON_ROWS = ["row-a", "row-b", "row-c"];
-const CATALOG_DISPLAY_LIMIT = 15;
+const CATALOG_SEARCH_LIMIT = 12;
 
 export default function CompaniesPage() {
   const router = useRouter();
@@ -59,11 +69,11 @@ export default function CompaniesPage() {
   const [addStoring, setAddStoring] = useState(false);
   const [addMsg, setAddMsg] = useState("");
 
-  // Catalog state — loaded on dialog open, filtered client-side
-  const [catalogAll, setCatalogAll] = useState<Company[]>([]);
+  // Catalog state — loaded on dialog open, searched remotely
+  const [catalogResults, setCatalogResults] = useState<Company[]>([]);
   const [catalogTotal, setCatalogTotal] = useState(0);
   const [catalogLoading, setCatalogLoading] = useState(false);
-  const [catalogFilter, setCatalogFilter] = useState("");
+  const [catalogQuery, setCatalogQuery] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Manual run dialog state
@@ -100,35 +110,30 @@ export default function CompaniesPage() {
   // Load catalog when dialog opens
   useEffect(() => {
     if (!addOpen) return;
-    setCatalogLoading(true);
-    setCatalogFilter("");
-    searchCatalog(undefined, undefined, 500, 0)
-      .then(({ companies: results, total }) => {
-        setCatalogAll(results);
-        setCatalogTotal(total);
-      })
-      .catch((err) => {
-        console.error("[CATALOG] Failed to load catalog:", err);
-        setCatalogAll([]);
-        setCatalogTotal(0);
-      })
-      .finally(() => setCatalogLoading(false));
+    setCatalogQuery("");
+    setCatalogResults([]);
+    setCatalogTotal(0);
   }, [addOpen]);
 
   // Debounced server search when filter changes (for better results)
   useEffect(() => {
-    if (!addOpen || !catalogFilter.trim()) return;
+    if (!addOpen || addMode !== "search") return;
     clearTimeout(debounceRef.current);
+    setCatalogLoading(true);
     debounceRef.current = setTimeout(() => {
-      searchCatalog(catalogFilter.trim(), undefined, 500, 0)
+      searchCatalog(catalogQuery.trim() || undefined, undefined, CATALOG_SEARCH_LIMIT, 0)
         .then(({ companies: results, total }) => {
-          setCatalogAll(results);
+          setCatalogResults(results);
           setCatalogTotal(total);
         })
-        .catch(() => {});
+        .catch(() => {
+          setCatalogResults([]);
+          setCatalogTotal(0);
+        })
+        .finally(() => setCatalogLoading(false));
     }, 300);
     return () => clearTimeout(debounceRef.current);
-  }, [catalogFilter, addOpen]);
+  }, [catalogQuery, addMode, addOpen]);
 
   useEffect(() => {
     if (!runOpen || !currentOrg) return;
@@ -205,7 +210,7 @@ export default function CompaniesPage() {
           setAddStoring(false);
           setAddMsg("");
           setAddOpen(false);
-          setCatalogFilter("");
+          setCatalogQuery("");
           void fetchCompanies();
         }
         if (event.type === "discovery_complete") {
@@ -216,7 +221,7 @@ export default function CompaniesPage() {
         setAddStoring(false);
         setAddMsg("");
         setAddOpen(false);
-        setCatalogFilter("");
+        setCatalogQuery("");
       },
       (err) => {
         setAddStoring(false);
@@ -225,29 +230,48 @@ export default function CompaniesPage() {
     );
   };
 
-  // Client-side filter on catalog results
-  const filteredCatalog = catalogFilter.trim()
-    ? (catalogAll ?? []).filter((c) => {
-        const q = catalogFilter.toLowerCase();
-        return (
-          c.company_name.toLowerCase().includes(q) ||
-          c.domain.toLowerCase().includes(q) ||
-          (c.industry?.toLowerCase().includes(q) ?? false)
-        );
-      })
-    : (catalogAll ?? []);
+  const resolveCatalogSelection = async (company: Company) => {
+    if (isAlreadyTracking(company.company_id)) {
+      setAddMsg(`${company.company_name} is already tracked.`);
+      return;
+    }
 
-  const displayedCatalog = filteredCatalog.slice(0, CATALOG_DISPLAY_LIMIT);
+    await handleTrackFromCatalog(company.website_url);
+  };
+
+  const handleSubmitCatalogQuery = async (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+
+    const topResult = catalogResults[0];
+    if (topResult && isExactEnoughCompanyMatch(topResult, trimmed)) {
+      await resolveCatalogSelection(topResult);
+      return;
+    }
+
+    if (looksLikeWebsiteQuery(trimmed)) {
+      await handleTrackFromCatalog(
+        trimmed.startsWith("http") ? trimmed : `https://${trimmed}`,
+      );
+      return;
+    }
+
+    setAddMsg(`No matching company found for "${trimmed}".`);
+  };
 
   const filteredCompanies = companies.filter((c) => {
     if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      c.company_name.toLowerCase().includes(q) ||
-      c.domain.toLowerCase().includes(q) ||
-      (c.industry?.toLowerCase().includes(q) ?? false)
-    );
+    return companyMatchesSearchQuery(c, searchQuery);
   });
+
+  const catalogOptions: EntitySearchOption<Company>[] = catalogResults.map((company) => ({
+    id: company.company_id,
+    label: company.company_name,
+    subtitle: `${company.domain}${company.industry ? ` · ${company.industry}` : ""}`,
+    meta: isAlreadyTracking(company.company_id) ? "Tracking" : null,
+    disabled: isAlreadyTracking(company.company_id),
+    value: company,
+  }));
 
   const selectedCompanies = companies.filter((company) =>
     selectedCompanyIds.includes(company.company_id),
@@ -339,7 +363,7 @@ export default function CompaniesPage() {
               if (!open) {
                 setAddUrl("");
                 setAddMsg("");
-                setCatalogFilter("");
+                setCatalogQuery("");
                 setAddMode("search");
               }
             }
@@ -373,86 +397,44 @@ export default function CompaniesPage() {
             </div>
 
             {addMode === "search" ? (
-              <div className="flex flex-col min-h-0 flex-1">
-                {/* Sticky search */}
-                <div className="px-5 pt-4 pb-2 shrink-0">
-                  <Input
-                    placeholder="Filter companies..."
-                    value={catalogFilter}
-                    onChange={(e) => setCatalogFilter(e.target.value)}
-                    disabled={addStoring}
-                    autoFocus
-                  />
-                </div>
+              <div className="flex flex-col gap-4 px-5 py-4">
+                <EntitySearchCombobox
+                  query={catalogQuery}
+                  onQueryChange={setCatalogQuery}
+                  options={catalogOptions}
+                  loading={catalogLoading}
+                  disabled={addStoring}
+                  placeholder="Search company by name or website"
+                  emptyMessage={
+                    catalogQuery.trim()
+                      ? `No companies match "${catalogQuery.trim()}".`
+                      : "No companies in catalog yet."
+                  }
+                  submitLabel={addStoring ? "Adding..." : "Track"}
+                  onSelectOption={(option) => resolveCatalogSelection(option.value)}
+                  onSubmitQuery={handleSubmitCatalogQuery}
+                />
 
-                {/* Scrollable list */}
-                <div className="flex-1 overflow-y-auto px-5 min-h-0">
-                  {catalogLoading ? (
-                    <div className="flex flex-col gap-2 py-2">
-                      {[1, 2, 3, 4, 5].map((k) => (
-                        <Skeleton key={k} className="h-12 w-full rounded-md" />
-                      ))}
-                    </div>
-                  ) : displayedCatalog.length === 0 ? (
-                    <div className="flex items-center justify-center py-10">
-                      <p className="text-xs text-muted-foreground text-center">
-                        {catalogFilter.trim()
-                          ? <>No companies match &ldquo;{catalogFilter.trim()}&rdquo;.<br />Switch to &ldquo;Add by URL&rdquo; to add a new one.</>
-                          : "No companies in catalog yet."
-                        }
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-1.5 py-2">
-                      {displayedCatalog.map((c) => (
-                        <div
-                          key={c.company_id}
-                          className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5 hover:bg-muted/50 transition-colors"
-                        >
-                          <div className="flex flex-col min-w-0 flex-1">
-                            <span className="break-words text-sm font-medium leading-snug sm:truncate">
-                              {c.company_name}
-                            </span>
-                            <span className="mt-0.5 break-all text-xs text-muted-foreground sm:truncate">
-                              {c.domain}
-                              {c.industry ? ` · ${c.industry}` : ""}
-                            </span>
-                          </div>
-                          {isAlreadyTracking(c.company_id) ? (
-                            <span className="text-xs text-muted-foreground shrink-0 px-2">Tracking</span>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="min-h-9 shrink-0 px-3"
-                              disabled={addStoring}
-                              onClick={() => handleTrackFromCatalog(c.website_url)}
-                            >
-                              Track
-                            </Button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  Search by company name or website. Press Enter to track the top exact-enough match, or enter a website to add a new company.
+                </p>
 
-                {/* Sticky footer */}
-                <div className="px-5 py-3 border-t bg-muted/30 shrink-0 flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 rounded-lg border bg-muted/30 px-3 py-2">
                   <p className="text-xs text-muted-foreground">
                     {catalogLoading
-                      ? "Loading catalog…"
-                      : `Showing ${displayedCatalog.length} of ${catalogTotal} companies${catalogFilter.trim() ? ` matching "${catalogFilter.trim()}"` : ""}`
-                    }
-                    {!catalogLoading && filteredCatalog.length > CATALOG_DISPLAY_LIMIT && (
-                      <> &mdash; {filteredCatalog.length - CATALOG_DISPLAY_LIMIT} more, refine to see them</>
-                    )}
+                      ? "Searching catalog..."
+                      : `${catalogOptions.length} result${catalogOptions.length === 1 ? "" : "s"} shown${catalogQuery.trim() ? ` for "${catalogQuery.trim()}"` : ""}`}
+                    {!catalogLoading && !catalogQuery.trim()
+                      ? ` · ${catalogTotal} companies in catalog`
+                      : ""}
                   </p>
-                  {addMsg && (
-                    <p className={`text-xs shrink-0 ${addMsg.startsWith("Error") ? "text-destructive" : "text-muted-foreground"}`}>
+                  {addMsg ? (
+                    <p
+                      className={`text-xs ${addMsg.startsWith("Error") ? "text-destructive" : "text-muted-foreground"}`}
+                    >
                       {addMsg}
                     </p>
-                  )}
+                  ) : null}
                 </div>
               </div>
             ) : (
@@ -504,7 +486,7 @@ export default function CompaniesPage() {
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <Input
+        <SearchInput
           placeholder="Search tracked companies..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
