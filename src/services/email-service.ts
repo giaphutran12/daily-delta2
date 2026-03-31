@@ -1,7 +1,14 @@
 import { Resend } from "resend";
-import { generateText } from "ai";
-import { anthropic } from "@ai-sdk/anthropic";
 import { ReportData, Company, SignalFinding, DigestCompany } from "@/lib/types";
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 function csvEscape(value: string): string {
   let safe = value;
@@ -418,41 +425,64 @@ function getSignalTypeLabel(type: string): string {
 async function generateDigestTldr(
   digestCompanies: DigestCompany[],
 ): Promise<string> {
-  try {
-    const totalSignals = digestCompanies.reduce(
-      (sum, dc) => sum + dc.findings.length,
-      0,
-    );
+  const changedCompanies = digestCompanies
+    .filter((company) => company.status === "changed" && company.findings.length > 0)
+    .sort((a, b) => b.findings.length - a.findings.length);
 
-    // Give the LLM the actual signal titles/summaries, not just counts
-    const companyBriefs = digestCompanies.map((dc) => {
-      const findingLines = dc.findings
-        .slice(0, 15) // cap per company to keep prompt reasonable
-        .map((f) => `  - [${getSignalTypeLabel(f.signal_type)}] ${f.title}: ${f.summary}`)
-        .join("\n");
-      return `${dc.company.company_name} (${dc.company.domain}):\n${findingLines}`;
-    });
-
-    const { text } = await generateText({
-      model: anthropic("claude-sonnet-4-20250514"),
-      system: `You write TLDR summaries for a VC-focused competitive intelligence digest.
-
-Your job: surface the 3-5 most important, actionable findings across all companies. Think like a VC — what matters is funding rounds, product launches, leadership changes, revenue milestones, and competitive moves.
-
-Rules:
-- Plain text only, no markdown, no bullet points, no bold
-- 3-4 sentences max
-- Name specific companies and what happened — no vague "heightened activity" language
-- End with a short note like "X more signals across Y companies below."
-- Be direct and specific. Every sentence should contain a concrete fact.`,
-      prompt: `Here are today's signals across ${digestCompanies.length} companies (${totalSignals} total signals). Write the TLDR:\n\n${companyBriefs.join("\n\n")}`,
-    });
-
-    return text.trim();
-  } catch (err) {
-    console.error("[Email] Failed to generate TLDR:", err);
+  const totalSignals = changedCompanies.reduce(
+    (sum, dc) => sum + dc.findings.length,
+    0,
+  );
+  if (changedCompanies.length === 0 || totalSignals === 0) {
     return "";
   }
+
+  const noChangeCount = digestCompanies.filter(
+    (company) => company.status === "no_change",
+  ).length;
+  const failedCount = digestCompanies.filter(
+    (company) => company.status === "failed",
+  ).length;
+  const highlightedCompanies = changedCompanies.slice(0, 3);
+  const highlightedSummary = highlightedCompanies
+    .map((company) => {
+      const primaryFinding = company.findings[0];
+      const signalType = primaryFinding
+        ? getSignalTypeLabel(primaryFinding.signal_type).toLowerCase()
+        : "signals";
+
+      return `${company.company.company_name} (${company.findings.length} new ${company.findings.length === 1 ? "signal" : "signals"}, led by ${signalType})`;
+    })
+    .join(", ");
+
+  const remainingCompanies = changedCompanies.length - highlightedCompanies.length;
+  const summaryParts = [
+    `${highlightedSummary} stood out in this run.`,
+    `We detected ${totalSignals} new signals across ${changedCompanies.length} compan${changedCompanies.length === 1 ? "y" : "ies"}.`,
+  ];
+
+  if (remainingCompanies > 0) {
+    summaryParts.push(
+      `${remainingCompanies} additional compan${remainingCompanies === 1 ? "y" : "ies"} with changes appear in the detailed sections below.`,
+    );
+  }
+
+  if (noChangeCount > 0 || failedCount > 0) {
+    const outcomeNotes = [];
+    if (noChangeCount > 0) {
+      outcomeNotes.push(
+        `${noChangeCount} compan${noChangeCount === 1 ? "y had" : "ies had"} no new signals`,
+      );
+    }
+    if (failedCount > 0) {
+      outcomeNotes.push(
+        `${failedCount} compan${failedCount === 1 ? "y" : "ies"} failed to process`,
+      );
+    }
+    summaryParts.push(`${outcomeNotes.join(", ")}.`);
+  }
+
+  return summaryParts.join(" ");
 }
 
 function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): string {
@@ -472,10 +502,60 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
   });
 
   const totalSignals = digestCompanies.reduce((sum, dc) => sum + dc.findings.length, 0);
+  const changedCount = digestCompanies.filter((dc) => dc.status === "changed").length;
+  const noChangeCount = digestCompanies.filter((dc) => dc.status === "no_change").length;
+  const failedCount = digestCompanies.filter((dc) => dc.status === "failed").length;
 
   // Build company sections
   const companySectionsHtml = digestCompanies.map((dc, companyIdx) => {
-    const { company, findings } = dc;
+    const { company, findings, status, error } = dc;
+
+    const metaLabel =
+      status === "failed"
+        ? "Pipeline failed"
+        : status === "no_change"
+          ? "No new signals"
+          : `${findings.length} new signal${findings.length !== 1 ? "s" : ""}`;
+
+    if (status === "failed") {
+      return `
+      <tr>
+        <td style="padding:${companyIdx === 0 ? "0" : "32px"} 40px 0;">
+          ${companyIdx > 0 ? `<div style="border-top:3px solid #1a1a1a;margin-bottom:32px;"></div>` : ""}
+          <h2 style="margin:0 0 4px;font-family:${serif};font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:-0.3px;">
+            ${company.company_name}
+          </h2>
+          <p style="margin:0 0 20px;font-family:${serif};font-size:13px;color:#666;">
+            ${company.domain}${company.industry ? ` · ${company.industry}` : ""} · ${metaLabel}
+          </p>
+          <div style="padding:16px 18px;border:1px solid #f0d0d0;background:#fff7f7;">
+            <p style="margin:0;font-family:${serif};font-size:14px;line-height:1.6;color:#7a1f1f;">
+              <strong>Pipeline Failed:</strong> ${escapeHtml(error || "An unknown error occurred while generating this company summary.")}
+            </p>
+          </div>
+        </td>
+      </tr>`;
+    }
+
+    if (status === "no_change") {
+      return `
+      <tr>
+        <td style="padding:${companyIdx === 0 ? "0" : "32px"} 40px 0;">
+          ${companyIdx > 0 ? `<div style="border-top:3px solid #1a1a1a;margin-bottom:32px;"></div>` : ""}
+          <h2 style="margin:0 0 4px;font-family:${serif};font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:-0.3px;">
+            ${company.company_name}
+          </h2>
+          <p style="margin:0 0 20px;font-family:${serif};font-size:13px;color:#666;">
+            ${company.domain}${company.industry ? ` · ${company.industry}` : ""} · ${metaLabel}
+          </p>
+          <div style="padding:16px 18px;border:1px solid #e6e6e6;background:#fafafa;">
+            <p style="margin:0;font-family:${serif};font-size:14px;line-height:1.6;color:#555;">
+              No new signals were detected for this company in this request.
+            </p>
+          </div>
+        </td>
+      </tr>`;
+    }
 
     // Group findings by signal_type
     const byType = new Map<string, SignalFinding[]>();
@@ -535,7 +615,7 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
             ${company.company_name}
           </h2>
           <p style="margin:0 0 20px;font-family:${serif};font-size:13px;color:#666;">
-            ${company.domain}${company.industry ? ` · ${company.industry}` : ""} · ${findings.length} new signal${findings.length !== 1 ? "s" : ""}
+            ${company.domain}${company.industry ? ` · ${company.industry}` : ""} · ${metaLabel}
           </p>
           ${typeSectionsHtml}
         </td>
@@ -563,6 +643,9 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
                   </p>
                   <p style="margin:8px 0 0;font-family:${serif};font-size:14px;color:#666;line-height:1.5;">
                     ${digestCompanies.map((dc) => dc.company.company_name).join(", ")}
+                  </p>
+                  <p style="margin:8px 0 0;font-family:${mono};font-size:11px;letter-spacing:0.6px;color:#777;text-transform:uppercase;">
+                    ${changedCount} changed · ${noChangeCount} unchanged · ${failedCount} failed · ${totalSignals} total signals
                   </p>
                 </td>
               </tr>
@@ -615,19 +698,55 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
 
 function buildDigestCSV(digestCompanies: DigestCompany[]): string {
   const rows: string[] = [];
-  rows.push("Company,Section,Title,Summary,Source,URL,Detected At");
+  rows.push("Company,Status,Section,Title,Summary,Source,URL,Detected At,Error");
 
-  for (const { company, findings } of digestCompanies) {
+  for (const { company, findings, status, error } of digestCompanies) {
+    if (status === "failed") {
+      rows.push(
+        [
+          csvEscape(company.company_name),
+          csvEscape(status),
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          csvEscape(error || "Pipeline failed"),
+        ].join(","),
+      );
+      continue;
+    }
+
+    if (status === "no_change" || findings.length === 0) {
+      rows.push(
+        [
+          csvEscape(company.company_name),
+          csvEscape("no_change"),
+          "",
+          "",
+          csvEscape("No new signals detected"),
+          "",
+          "",
+          "",
+          "",
+        ].join(","),
+      );
+      continue;
+    }
+
     for (const f of findings) {
       rows.push(
         [
           csvEscape(company.company_name),
+          csvEscape(status),
           csvEscape(getSignalTypeLabel(f.signal_type)),
           csvEscape(f.title),
           csvEscape(f.summary),
           csvEscape(f.source),
           csvEscape(f.url || ""),
           csvEscape(f.detected_at || ""),
+          "",
         ].join(","),
       );
     }
@@ -640,9 +759,48 @@ function buildDigestCSV(digestCompanies: DigestCompany[]): string {
   return rows.join("\n");
 }
 
+export interface DigestEmailPreview {
+  subject: string;
+  html: string;
+  csv: string;
+}
+
+async function buildDigestEmailPreview(
+  digestCompanies: DigestCompany[],
+): Promise<DigestEmailPreview> {
+  const tldr = await generateDigestTldr(digestCompanies);
+  const html = buildDigestEmail(digestCompanies, tldr);
+  const csv = buildDigestCSV(digestCompanies);
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+
+  const companyNames =
+    digestCompanies.length <= 3
+      ? digestCompanies.map((dc) => dc.company.company_name).join(", ")
+      : `${digestCompanies.length} companies`;
+
+  return {
+    subject: `Daily Delta — ${companyNames} — ${dateStr}`,
+    html,
+    csv,
+  };
+}
+
+export async function previewDigestEmail(
+  digestCompanies: DigestCompany[],
+): Promise<DigestEmailPreview> {
+  return buildDigestEmailPreview(digestCompanies);
+}
+
 export async function sendDigestEmail(
   toEmail: string,
   digestCompanies: DigestCompany[],
+  options?: { idempotencyKey?: string },
 ): Promise<boolean> {
   try {
     const apiKey = process.env.RESEND_API_KEY;
@@ -657,37 +815,28 @@ export async function sendDigestEmail(
       digestCompanies.length, totalSignals, toEmail,
     );
 
-    const tldr = await generateDigestTldr(digestCompanies);
-    const html = buildDigestEmail(digestCompanies, tldr);
-    const csv = buildDigestCSV(digestCompanies);
-
+    const { subject, html, csv } = await buildDigestEmailPreview(
+      digestCompanies,
+    );
     const now = new Date();
-    const dateStr = now.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-
-    const companyNames = digestCompanies.length <= 3
-      ? digestCompanies.map((dc) => dc.company.company_name).join(", ")
-      : `${digestCompanies.length} companies`;
-
-    const subject = `Daily Delta — ${companyNames} — ${dateStr}`;
     const fileDate = now.toISOString().slice(0, 10);
 
     const resend = new Resend(apiKey);
-    const { data, error } = await resend.emails.send({
-      from: `Daily Delta <${fromEmail}>`,
-      to: [toEmail],
-      subject,
-      html,
-      attachments: [
-        {
-          filename: `daily_delta_digest_${fileDate}.csv`,
-          content: Buffer.from(csv).toString("base64"),
-        },
-      ],
-    });
+    const { data, error } = await resend.emails.send(
+      {
+        from: `Daily Delta <${fromEmail}>`,
+        to: [toEmail],
+        subject,
+        html,
+        attachments: [
+          {
+            filename: `daily_delta_digest_${fileDate}.csv`,
+            content: Buffer.from(csv).toString("base64"),
+          },
+        ],
+      },
+      { idempotencyKey: options?.idempotencyKey },
+    );
 
     if (error) {
       throw new Error(`Resend API error: ${error.message}`);

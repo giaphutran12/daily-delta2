@@ -136,6 +136,20 @@ export async function trackCompany(
 ): Promise<void> {
   const supabase = createAdminClient();
 
+  const { count: existingCount, error: existingError } = await supabase
+    .from("organization_tracked_companies")
+    .select("id", { count: "exact", head: true })
+    .eq("organization_id", organizationId)
+    .eq("company_id", companyId);
+
+  if (existingError) {
+    throw new Error(`Failed to check tracked company: ${existingError.message}`);
+  }
+
+  if ((existingCount ?? 0) > 0) {
+    return;
+  }
+
   // Check tracking limit
   const { data: org } = await supabase
     .from("organizations")

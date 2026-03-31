@@ -3,7 +3,7 @@ import { resolveTemplate, buildGoalFromDefinition } from "@/lib/utils/template";
 import { buildDiscoveryGoal } from "@/services/goals";
 import { startTinyfishAgent, runTinyfishAgentSync, TinyfishCallbacks } from "@/services/tinyfish-client";
 
-interface AgentDefinition {
+export interface PreparedIntelligenceAgent {
   id: string;
   type: string;
   name: string;
@@ -12,10 +12,10 @@ interface AgentDefinition {
   definitionId: string;
 }
 
-function buildAgentsFromDefinitions(
+export function buildAgentsFromDefinitions(
   company: Company,
   definitions: SignalDefinition[],
-): AgentDefinition[] {
+): PreparedIntelligenceAgent[] {
   return definitions
     .filter((def) => def.enabled)
     .map((def) => {

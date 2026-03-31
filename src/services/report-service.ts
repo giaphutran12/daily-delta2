@@ -10,6 +10,14 @@ import {
   SignalDefinition,
 } from "@/lib/types";
 
+export interface DigestCompanyOutcomeInput {
+  companyId: string;
+  reportId?: string | null;
+  status: "completed" | "failed";
+  signalCount: number;
+  error?: string | null;
+}
+
 /** Sort signals by detected_at descending (latest first) */
 function sortByDateDesc(items: ReportSignal[]): ReportSignal[] {
   return items.sort(
@@ -287,8 +295,93 @@ export async function getDigestCompaniesForReports(
       return {
         company,
         findings,
+        status: "changed" as const,
+        reportId: report.report_id,
       };
     });
+}
+
+export async function getDigestCompaniesForOutcomes(
+  outcomes: DigestCompanyOutcomeInput[],
+): Promise<DigestCompany[]> {
+  if (outcomes.length === 0) return [];
+
+  const companyIds = [...new Set(outcomes.map((outcome) => outcome.companyId))];
+  const reportIds = [
+    ...new Set(
+      outcomes
+        .map((outcome) => outcome.reportId)
+        .filter((reportId): reportId is string => !!reportId),
+    ),
+  ];
+
+  const supabase = createAdminClient();
+  const [companyResponse, reportResponse] = await Promise.all([
+    supabase.from("companies").select("*").in("company_id", companyIds),
+    reportIds.length > 0
+      ? supabase.from("reports").select("*, companies(*)").in("report_id", reportIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
+
+  if (companyResponse.error) {
+    throw new Error(`Failed to load digest companies: ${companyResponse.error.message}`);
+  }
+
+  if (reportResponse.error) {
+    throw new Error(`Failed to load digest reports: ${reportResponse.error.message}`);
+  }
+
+  const companyById = new Map(
+    ((companyResponse.data ?? []) as Company[]).map((company) => [
+      company.company_id,
+      company,
+    ]),
+  );
+
+  const reportById = new Map(
+    ((reportResponse.data ?? []) as Array<Record<string, unknown>>).map((row) => {
+      const report = rowToReport(row);
+      return [report.report_id, report] as const;
+    }),
+  );
+
+  return outcomes.flatMap((outcome) => {
+    const company = companyById.get(outcome.companyId);
+    if (!company) return [];
+
+    const report =
+      outcome.reportId && reportById.has(outcome.reportId)
+        ? reportById.get(outcome.reportId)!
+        : null;
+
+    const findings: SignalFinding[] = report
+      ? report.report_data.sections.flatMap((section) =>
+          section.items.map((item) => ({
+            signal_type: section.signal_type,
+            title: item.title,
+            summary: item.summary,
+            source: item.source,
+            url: item.url,
+            detected_at: item.detected_at,
+          })),
+        )
+      : [];
+
+    return [
+      {
+        company,
+        findings,
+        status:
+          outcome.status === "failed"
+            ? ("failed" as const)
+            : outcome.reportId && outcome.signalCount > 0
+              ? ("changed" as const)
+              : ("no_change" as const),
+        reportId: outcome.reportId ?? undefined,
+        error: outcome.error ?? undefined,
+      },
+    ];
+  });
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

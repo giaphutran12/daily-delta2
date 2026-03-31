@@ -16,9 +16,17 @@ import {
   markCompanyRunsRequested,
   markPipelineRequestFinalized,
   preparePipelineRequest,
-  processQueuedCompanyRun,
   sendPipelineDigestDelivery,
 } from "@/services/pipeline-request-service";
+import {
+  failCompanyRun,
+  finalizeCompanyAgents,
+  pollCompanyAgents,
+  submitCompanyAgents,
+} from "@/services/pipeline-service";
+
+const AGENT_POLL_INTERVAL = "1 min";
+const MAX_AGENT_POLLS = 480;
 
 function sanitizeStepId(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 48);
@@ -33,7 +41,7 @@ export const pipelineRequested = inngest.createFunction(
     const data = event.data as PipelineRequestedEventData;
 
     const prepared = await step.run("prepare-pipeline-request", () =>
-      preparePipelineRequest(event.id, data.source, data.companyIds, {
+      preparePipelineRequest(event.id, data.source, data.requestId, data.requestKey, data.companyIds, {
         organizationId: data.organizationId,
         requestedByUserId: data.requestedByUserId,
         recipientUserIds: data.recipientUserIds,
@@ -79,18 +87,58 @@ export const processCompanyPipelineRun = inngest.createFunction(
   },
   async ({ event, step }) => {
     const data = event.data as CompanyRequestedEventData;
-    const result = await step.run("process-company-run", () =>
-      processQueuedCompanyRun(data.companyRunId),
-    );
+    try {
+      await step.run("submit-company-agents", () =>
+        submitCompanyAgents(data.companyRunId),
+      );
 
-    await step.sendEvent("notify-company-run-completed", {
-      name: COMPANY_COMPLETED_EVENT,
-      data: {
-        companyRunId: data.companyRunId,
-      },
-    });
+      let pollResult = await step.run("poll-company-agents-0", () =>
+        pollCompanyAgents(data.companyRunId),
+      );
 
-    return result;
+      let pollAttempt = 0;
+      while (!pollResult.terminal) {
+        pollAttempt += 1;
+        if (pollAttempt > MAX_AGENT_POLLS) {
+          throw new Error(
+            `Company run ${data.companyRunId} exceeded the maximum poll budget`,
+          );
+        }
+
+        await step.sleep(`wait-for-company-agents-${pollAttempt}`, AGENT_POLL_INTERVAL);
+        pollResult = await step.run(`poll-company-agents-${pollAttempt}`, () =>
+          pollCompanyAgents(data.companyRunId),
+        );
+      }
+
+      const result = await step.run("finalize-company-agents", () =>
+        finalizeCompanyAgents(data.companyRunId),
+      );
+
+      await step.sendEvent("notify-company-run-completed", {
+        name: COMPANY_COMPLETED_EVENT,
+        data: {
+          companyRunId: data.companyRunId,
+        },
+      });
+
+      return result;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      const failed = await step.run("mark-company-run-failed", () =>
+        failCompanyRun(data.companyRunId, message),
+      );
+
+      await step.sendEvent("notify-company-run-completed-after-failure", {
+        name: COMPANY_COMPLETED_EVENT,
+        data: {
+          companyRunId: data.companyRunId,
+        },
+      });
+
+      return failed;
+    }
   },
 );
 

@@ -356,8 +356,10 @@ export default function CompanyDetailPage() {
           ? `${result.competitor.company_name} was added. Fresh signals are being prepared now.`
           : `${result.competitor.company_name} was added to the competitor timeline.`,
       );
-    } catch {
-      setCompetitorMessage("Failed to add competitor.");
+    } catch (error) {
+      setCompetitorMessage(
+        error instanceof Error ? error.message : "Failed to add competitor.",
+      );
     } finally {
       setCompetitorSaving(false);
     }
