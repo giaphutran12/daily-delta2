@@ -102,5 +102,53 @@
     "viewport": "desktop",
     "title": "Broken images and icon regressions",
     "instructions": "Scan the authenticated app surfaces you touch in this scenario for broken images, missing icons, or obviously failed asset loads."
+  },
+  {
+    "id": "pipeline-trigger-ui",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Pipeline 'Run Now' trigger works",
+    "instructions": "Navigate to the companies page, click the 'Run' or 'Run Now' button to trigger a manual pipeline run. Verify the button responds, shows a loading/progress state, and does not error out or hang. Report whether a confirmation or result appears."
+  },
+  {
+    "id": "signal-detail-view",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Signal cards render with correct data",
+    "instructions": "Open a tracked company's detail page and scroll to the signal timeline. Verify that signal cards render with a title, source, date, and no broken layouts. Check that at least one signal is visible if the company has been processed."
+  },
+  {
+    "id": "org-switcher",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Organization switcher changes company list",
+    "instructions": "If an organization switcher is visible in the sidebar or header, switch to a different organization and verify the company list updates. If only one org exists, verify the switcher is either hidden or shows the current org without errors."
+  },
+  {
+    "id": "empty-state-company-list",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Empty state renders correctly when no companies tracked",
+    "instructions": "If there are no tracked companies, verify the empty state message renders cleanly with a call-to-action to add a company. If companies exist, search for a nonsense query to trigger the 'no results' empty state and verify it shows an appropriate message."
+  },
+  {
+    "id": "error-boundary-network",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Error feedback appears on failed actions",
+    "instructions": "Navigate the app normally and check for any error toast or inline error messages after page loads. If no errors occur naturally, try an action that might fail (like untracking and immediately re-tracking a company) and verify the UI shows error feedback instead of a blank or frozen screen."
+  },
+  {
+    "id": "competitor-search",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "desktop",
+    "title": "Competitor search returns correct results",
+    "instructions": "Open a tracked company's detail page, find the competitor search input, and type a well-known company name like 'Stripe'. Verify results appear, there are no duplicate entries for the same company, and selecting one adds it to the competitor list."
   }
 ]
