@@ -51,9 +51,20 @@ export interface Company {
   platform_status: 'active' | 'pending_discovery' | 'enriching' | 'archived';
 }
 
+export interface CompanyBucket {
+  bucket_id: string;
+  organization_id: string;
+  name: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TrackedCompany extends Company {
   tracked_at: string;
   tracked_by: string | null;
+  bucket_id: string | null;
+  bucket?: CompanyBucket | null;
 }
 
 export type SignalType = string;
