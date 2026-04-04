@@ -18,6 +18,7 @@ import {
 } from "@/services/orchestrator";
 import {
   generateReportFromFindings,
+  getRecentReportForCompany,
   storeReport,
 } from "@/services/report-service";
 import { getSignalDefinitions } from "@/services/signal-definition-service";
@@ -476,8 +477,18 @@ export interface FinalizedCompanyRun {
   error?: string;
 }
 
+export interface MaybeReusedCompanyRun {
+  cacheHit: boolean;
+  result?: FinalizedCompanyRun;
+}
+
 function toReportTrigger(source: "cron" | "manual" | "refresh"): "manual" | "cron" {
   return source === "cron" ? "cron" : "manual";
+}
+
+function getPipelineCacheTtlHours(): number {
+  const parsed = Number(process.env.PIPELINE_CACHE_TTL_HOURS ?? "6");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 6;
 }
 
 function readAgentErrorMessage(error: unknown): string {
@@ -657,6 +668,63 @@ export async function failCompanyRun(
     status: "failed",
     signalCount: 0,
     error: errorMessage,
+  };
+}
+
+export async function maybeReuseRecentReport(
+  companyRunId: string,
+): Promise<MaybeReusedCompanyRun> {
+  const companyRun = await getCompanyPipelineRun(companyRunId);
+  if (!companyRun) {
+    throw new Error(`Company pipeline run ${companyRunId} not found`);
+  }
+
+  if (companyRun.status === "completed" || companyRun.status === "failed") {
+    return {
+      cacheHit: false,
+      result: {
+        companyRunId,
+        companyId: companyRun.company_id,
+        status: companyRun.status,
+        signalCount: companyRun.signal_count,
+        reportId: companyRun.report_id ?? undefined,
+        error: companyRun.error ?? undefined,
+      },
+    };
+  }
+
+  const recent = await getRecentReportForCompany(
+    companyRun.company_id,
+    getPipelineCacheTtlHours(),
+  );
+  if (!recent) {
+    return { cacheHit: false };
+  }
+
+  await markCompanyRunState(companyRunId, {
+    status: "completed",
+    report_id: recent.report.report_id,
+    signal_count: recent.signalCount,
+    error: null,
+    started_at: new Date().toISOString(),
+    completed_at: new Date().toISOString(),
+  });
+
+  console.log(
+    "[PIPELINE] [CACHE HIT] Reused report %s for company %s",
+    recent.report.report_id,
+    companyRun.company_id,
+  );
+
+  return {
+    cacheHit: true,
+    result: {
+      companyRunId,
+      companyId: companyRun.company_id,
+      status: "completed",
+      signalCount: recent.signalCount,
+      reportId: recent.report.report_id,
+    },
   };
 }
 
