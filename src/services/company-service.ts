@@ -8,7 +8,7 @@ import {
   rankCompaniesBySearch,
   tokenizeCompanySearchText,
 } from "@/lib/utils/company-search";
-import type { Company, DiscoveryResult, TrackedCompany } from "@/lib/types";
+import type { Company, CompanyBucket, DiscoveryResult, TrackedCompany } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Platform Company Operations
@@ -141,18 +141,40 @@ export async function getTrackedCompanies(
 
   const { data, error } = await supabase
     .from("organization_tracked_companies")
-    .select("tracked_at, tracked_by, companies(*)")
+    .select("company_id, bucket_id, tracked_at, tracked_by, companies(*)")
     .eq("organization_id", organizationId)
     .order("tracked_at", { ascending: false });
 
   if (error) throw new Error(`Failed to fetch tracked companies: ${error.message}`);
 
+  const bucketIds = [...new Set((data ?? []).map((row) => row.bucket_id).filter(Boolean))];
+  let bucketMap = new Map<string, CompanyBucket>();
+
+  if (bucketIds.length > 0) {
+    const { data: bucketRows, error: bucketError } = await supabase
+      .from("company_buckets")
+      .select("*")
+      .eq("organization_id", organizationId)
+      .in("bucket_id", bucketIds);
+
+    if (bucketError) {
+      throw new Error(`Failed to fetch company buckets: ${bucketError.message}`);
+    }
+
+    bucketMap = new Map(
+      ((bucketRows ?? []) as CompanyBucket[]).map((bucket) => [bucket.bucket_id, bucket]),
+    );
+  }
+
   return (data ?? []).map((row) => {
     const company = row.companies as unknown as Company;
+    const bucketId = (row.bucket_id as string | null) ?? null;
     return {
       ...company,
       tracked_at: row.tracked_at,
       tracked_by: row.tracked_by,
+      bucket_id: bucketId,
+      bucket: bucketId ? bucketMap.get(bucketId) ?? null : null,
     } as TrackedCompany;
   });
 }

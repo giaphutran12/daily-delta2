@@ -3,6 +3,7 @@ import type {
   Organization,
   OrganizationMember,
   Company,
+  CompanyBucket,
   TrackedCompany,
   Signal,
   Report,
@@ -87,7 +88,7 @@ async function requireOk(
   throw new Error(await getApiErrorMessage(res, fallback));
 }
 
-export type { Organization, OrganizationMember, Company, TrackedCompany, Signal, Report, ReportData, ReportSection, ReportSignal, SignalDefinition, CompetitorLink };
+export type { Organization, OrganizationMember, Company, CompanyBucket, TrackedCompany, Signal, Report, ReportData, ReportSection, ReportSignal, SignalDefinition, CompetitorLink };
 
 export type EmailFrequency = "daily" | "every_3_days" | "weekly" | "monthly";
 
@@ -254,6 +255,57 @@ export async function getCompanies(): Promise<{ companies: TrackedCompany[] }> {
   const res = await authFetch(`${API_BASE}/companies`);
   const data = await res.json();
   return { companies: data.companies ?? [] };
+}
+
+export async function getCompanyBuckets(): Promise<CompanyBucket[]> {
+  const res = await authFetch(`${API_BASE}/company-buckets`);
+  await requireOk(res, "Failed to load company buckets");
+  const data = await res.json();
+  return data.buckets ?? [];
+}
+
+export async function createTrackedCompanyBucket(name: string): Promise<CompanyBucket> {
+  const res = await authFetch(`${API_BASE}/company-buckets`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  await requireOk(res, "Failed to create company bucket");
+  const data = await res.json();
+  return data.bucket;
+}
+
+export async function renameTrackedCompanyBucket(
+  bucketId: string,
+  name: string,
+): Promise<CompanyBucket> {
+  const res = await authFetch(`${API_BASE}/company-buckets/${bucketId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  await requireOk(res, "Failed to rename company bucket");
+  const data = await res.json();
+  return data.bucket;
+}
+
+export async function deleteTrackedCompanyBucket(bucketId: string): Promise<void> {
+  const res = await authFetch(`${API_BASE}/company-buckets/${bucketId}`, {
+    method: "DELETE",
+  });
+  await requireOk(res, "Failed to delete company bucket");
+}
+
+export async function assignTrackedCompanyBucket(
+  companyId: string,
+  bucketId: string | null,
+): Promise<void> {
+  const res = await authFetch(`${API_BASE}/companies/${companyId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bucket_id: bucketId }),
+  });
+  await requireOk(res, "Failed to update company bucket");
 }
 
 export async function untrackCompany(id: string): Promise<void> {

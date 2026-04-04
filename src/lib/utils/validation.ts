@@ -9,6 +9,24 @@ export const AddCompanyRequestSchema = z.object({
 
 export type AddCompanyRequest = z.infer<typeof AddCompanyRequestSchema>;
 
+export const CompanyBucketCreateSchema = z.object({
+  name: z.string().trim().min(1, "Bucket name required").max(60, "Bucket name too long"),
+});
+
+export type CompanyBucketCreate = z.infer<typeof CompanyBucketCreateSchema>;
+
+export const CompanyBucketUpdateSchema = z.object({
+  name: z.string().trim().min(1, "Bucket name required").max(60, "Bucket name too long"),
+});
+
+export type CompanyBucketUpdate = z.infer<typeof CompanyBucketUpdateSchema>;
+
+export const CompanyBucketAssignmentSchema = z.object({
+  bucket_id: z.string().uuid().nullable(),
+});
+
+export type CompanyBucketAssignment = z.infer<typeof CompanyBucketAssignmentSchema>;
+
 // ---------- Signal Definition ----------
 
 export const SignalDefinitionCreateSchema = z.object({

@@ -7,12 +7,18 @@ import { toast } from "sonner";
 import ShinyText from "@/components/ShinyText";
 import {
   getCompanies,
+  getCompanyBuckets,
+  createTrackedCompanyBucket,
+  renameTrackedCompanyBucket,
+  deleteTrackedCompanyBucket,
+  assignTrackedCompanyBucket,
   addAndTrackCompanySSE,
   searchCatalog,
   getOrgMembers,
   triggerManualPipelineRun,
   type TrackedCompany,
   type Company,
+  type CompanyBucket,
   type OrganizationMember,
 } from "@/lib/api/client";
 import {
@@ -48,6 +54,13 @@ import {
   type EntitySearchOption,
 } from "@/components/entity-search-combobox";
 import { SearchInput } from "@/components/search-input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const SKELETON_ROWS = ["row-a", "row-b", "row-c"];
 const CATALOG_SEARCH_LIMIT = 12;
@@ -57,9 +70,18 @@ export default function CompaniesPage() {
   const { currentOrg, user } = useAuth();
 
   const [companies, setCompanies] = useState<TrackedCompany[]>([]);
+  const [buckets, setBuckets] = useState<CompanyBucket[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
+  const [manageBucketsOpen, setManageBucketsOpen] = useState(false);
+  const [newBucketName, setNewBucketName] = useState("");
+  const [creatingBucket, setCreatingBucket] = useState(false);
+  const [renamingBucketId, setRenamingBucketId] = useState<string | null>(null);
+  const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
+  const [bucketSavingId, setBucketSavingId] = useState<string | null>(null);
+  const [bucketDeletingId, setBucketDeletingId] = useState<string | null>(null);
+  const [bucketAssigningCompanyId, setBucketAssigningCompanyId] = useState<string | null>(null);
 
   // Add company dialog state
   const [addOpen, setAddOpen] = useState(false);
@@ -84,10 +106,18 @@ export default function CompaniesPage() {
 
   const fetchCompanies = useCallback(async () => {
     try {
-      const { companies: data } = await getCompanies();
+      const [{ companies: data }, bucketData] = await Promise.all([
+        getCompanies(),
+        getCompanyBuckets(),
+      ]);
       setCompanies(data);
+      setBuckets(bucketData);
+      setRenameDrafts(
+        Object.fromEntries(bucketData.map((bucket) => [bucket.bucket_id, bucket.name])),
+      );
     } catch (err) {
       setCompanies([]);
+      setBuckets([]);
       toast.error(err instanceof Error ? err.message : "Failed to load companies");
     }
   }, []);
@@ -277,6 +307,25 @@ export default function CompaniesPage() {
     selectedCompanyIds.includes(company.company_id),
   );
 
+  const sortedBuckets = [...buckets].sort(
+    (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name),
+  );
+
+  const bucketGroups = [
+    ...sortedBuckets.map((bucket) => ({
+      key: bucket.bucket_id,
+      title: bucket.name,
+      bucketId: bucket.bucket_id,
+      companies: filteredCompanies.filter((company) => company.bucket_id === bucket.bucket_id),
+    })),
+    {
+      key: "unassigned",
+      title: "Unassigned",
+      bucketId: null as string | null,
+      companies: filteredCompanies.filter((company) => !company.bucket_id),
+    },
+  ].filter((group) => !searchQuery.trim() || group.companies.length > 0);
+
   const allVisibleSelected =
     filteredCompanies.length > 0 &&
     filteredCompanies.every((company) =>
@@ -317,6 +366,94 @@ export default function CompaniesPage() {
     setSelectedRecipientIds([]);
   };
 
+  const handleCreateBucket = async () => {
+    const trimmed = newBucketName.trim();
+    if (!trimmed) return;
+
+    setCreatingBucket(true);
+    try {
+      const bucket = await createTrackedCompanyBucket(trimmed);
+      setBuckets((prev) => [...prev, bucket]);
+      setRenameDrafts((prev) => ({ ...prev, [bucket.bucket_id]: bucket.name }));
+      setNewBucketName("");
+      toast.success(`Created bucket "${bucket.name}".`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create bucket");
+    } finally {
+      setCreatingBucket(false);
+    }
+  };
+
+  const handleRenameBucket = async (bucketId: string) => {
+    const nextName = renameDrafts[bucketId]?.trim() ?? "";
+    if (!nextName) return;
+
+    setBucketSavingId(bucketId);
+    try {
+      const bucket = await renameTrackedCompanyBucket(bucketId, nextName);
+      setBuckets((prev) =>
+        prev.map((entry) => (entry.bucket_id === bucketId ? bucket : entry)),
+      );
+      setRenameDrafts((prev) => ({ ...prev, [bucketId]: bucket.name }));
+      setRenamingBucketId(null);
+      toast.success(`Renamed bucket to "${bucket.name}".`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to rename bucket");
+    } finally {
+      setBucketSavingId(null);
+    }
+  };
+
+  const handleDeleteBucket = async (bucketId: string) => {
+    setBucketDeletingId(bucketId);
+    try {
+      await deleteTrackedCompanyBucket(bucketId);
+      setBuckets((prev) => prev.filter((bucket) => bucket.bucket_id !== bucketId));
+      setRenameDrafts((prev) => {
+        const next = { ...prev };
+        delete next[bucketId];
+        return next;
+      });
+      setCompanies((prev) =>
+        prev.map((company) =>
+          company.bucket_id === bucketId
+            ? { ...company, bucket_id: null, bucket: null }
+            : company,
+        ),
+      );
+      toast.success("Deleted bucket.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete bucket");
+    } finally {
+      setBucketDeletingId(null);
+    }
+  };
+
+  const handleAssignBucket = async (companyId: string, bucketId: string | null) => {
+    setBucketAssigningCompanyId(companyId);
+    try {
+      await assignTrackedCompanyBucket(companyId, bucketId);
+      setCompanies((prev) =>
+        prev.map((company) => {
+          if (company.company_id !== companyId) return company;
+          const bucket = bucketId
+            ? buckets.find((entry) => entry.bucket_id === bucketId) ?? null
+            : null;
+          return {
+            ...company,
+            bucket_id: bucketId,
+            bucket,
+          };
+        }),
+      );
+      toast.success(bucketId ? "Bucket assigned." : "Company moved to Unassigned.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update bucket");
+    } finally {
+      setBucketAssigningCompanyId(null);
+    }
+  };
+
   const handleRunSelected = async () => {
     if (selectedCompanyIds.length === 0) return;
 
@@ -345,6 +482,44 @@ export default function CompaniesPage() {
     }
   };
 
+  const renderBucketSelect = (
+    company: TrackedCompany,
+    options?: { compact?: boolean },
+  ) => (
+    <div
+      className={`flex min-w-[12rem] flex-col gap-1 ${options?.compact ? "" : ""}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {!options?.compact ? (
+        <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground/80">
+          Bucket
+        </Label>
+      ) : null}
+      <Select
+        value={company.bucket_id ?? "unassigned"}
+        onValueChange={(value) =>
+          void handleAssignBucket(
+            company.company_id,
+            value === "unassigned" ? null : value,
+          )
+        }
+        disabled={bucketAssigningCompanyId === company.company_id}
+      >
+        <SelectTrigger className={`h-8 bg-background text-xs ${options?.compact ? "min-w-[11rem]" : ""}`}>
+          <SelectValue placeholder="Unassigned" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="unassigned">Unassigned</SelectItem>
+          {sortedBuckets.map((bucket) => (
+            <SelectItem key={bucket.bucket_id} value={bucket.bucket_id}>
+              {bucket.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center justify-between gap-4">
@@ -355,28 +530,144 @@ export default function CompaniesPage() {
           </p>
         </div>
 
-        <Dialog
-          open={addOpen}
-          onOpenChange={(open) => {
-            if (!addStoring) {
-              setAddOpen(open);
-              if (!open) {
-                setAddUrl("");
-                setAddMsg("");
-                setCatalogQuery("");
-                setAddMode("search");
+        <div className="flex items-center gap-2">
+          <Dialog open={manageBucketsOpen} onOpenChange={setManageBucketsOpen}>
+            <DialogTrigger render={<Button size="sm" variant="outline" />}>
+              Manage Buckets
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle>Manage Buckets</DialogTitle>
+                <DialogDescription>
+                  Buckets are shared across your organization. Deleting a bucket
+                  keeps its companies tracked and moves them back to Unassigned.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="new-bucket-name">Create bucket</Label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="new-bucket-name"
+                      placeholder="e.g. Payments, AI Apps, Infra"
+                      value={newBucketName}
+                      onChange={(event) => setNewBucketName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && newBucketName.trim()) {
+                          event.preventDefault();
+                          void handleCreateBucket();
+                        }
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      disabled={creatingBucket || !newBucketName.trim()}
+                      onClick={() => void handleCreateBucket()}
+                    >
+                      {creatingBucket ? "Creating..." : "Add"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Existing buckets</Label>
+                  {sortedBuckets.length === 0 ? (
+                    <div className="rounded-lg border border-dashed bg-muted/30 px-4 py-6 text-sm text-muted-foreground">
+                      No buckets yet. Create one above to start grouping companies.
+                    </div>
+                  ) : (
+                    <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                      {sortedBuckets.map((bucket) => {
+                        const draftValue = renameDrafts[bucket.bucket_id] ?? bucket.name;
+                        const isUpdating = bucketSavingId === bucket.bucket_id;
+                        const isDeleting = bucketDeletingId === bucket.bucket_id;
+                        const isDirty = draftValue.trim() !== bucket.name;
+
+                        return (
+                          <div
+                            key={bucket.bucket_id}
+                            className="rounded-lg border bg-muted/20 p-3"
+                          >
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                              <Input
+                                value={draftValue}
+                                disabled={isUpdating || isDeleting}
+                                onChange={(event) =>
+                                  setRenameDrafts((prev) => ({
+                                    ...prev,
+                                    [bucket.bucket_id]: event.target.value,
+                                  }))
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" && draftValue.trim() && isDirty) {
+                                    event.preventDefault();
+                                    void handleRenameBucket(bucket.bucket_id);
+                                  }
+                                }}
+                              />
+                              <div className="flex items-center gap-2 sm:justify-end">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  disabled={isUpdating || isDeleting || !draftValue.trim() || !isDirty}
+                                  onClick={() => void handleRenameBucket(bucket.bucket_id)}
+                                >
+                                  {isUpdating ? "Saving..." : "Save"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  className="text-destructive hover:text-destructive"
+                                  disabled={isUpdating || isDeleting}
+                                  onClick={() => void handleDeleteBucket(bucket.bucket_id)}
+                                >
+                                  {isDeleting ? "Deleting..." : "Delete"}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setManageBucketsOpen(false)}
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog
+            open={addOpen}
+            onOpenChange={(open) => {
+              if (!addStoring) {
+                setAddOpen(open);
+                if (!open) {
+                  setAddUrl("");
+                  setAddMsg("");
+                  setCatalogQuery("");
+                  setAddMode("search");
+                }
               }
-            }
-          }}
-        >
-          <DialogTrigger render={<Button size="sm" />}>
-            <Plus className="h-4 w-4" />
-            Add Company
-          </DialogTrigger>
-          <DialogContent className="flex flex-col sm:max-w-lg max-h-[90vh] p-0 gap-0 overflow-hidden">
-            <DialogHeader className="px-5 pt-5 pb-0 shrink-0">
-              <DialogTitle>Add Company</DialogTitle>
-            </DialogHeader>
+            }}
+          >
+            <DialogTrigger render={<Button size="sm" />}>
+              <Plus className="h-4 w-4" />
+              Add Company
+            </DialogTrigger>
+            <DialogContent className="flex flex-col sm:max-w-lg max-h-[90vh] p-0 gap-0 overflow-hidden">
+              <DialogHeader className="px-5 pt-5 pb-0 shrink-0">
+                <DialogTitle>Add Company</DialogTitle>
+              </DialogHeader>
 
             {/* Mode tabs */}
             <div className="flex gap-1 px-5 pt-3 pb-0 border-b shrink-0">
@@ -481,8 +772,9 @@ export default function CompaniesPage() {
                 </DialogFooter>
               </form>
             )}
-          </DialogContent>
-        </Dialog>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -503,6 +795,159 @@ export default function CompaniesPage() {
           >
             {allVisibleSelected ? "Clear visible selection" : "Select visible"}
           </Button>
+
+          <Dialog
+            open={manageBucketsOpen}
+            onOpenChange={(open) => {
+              if (!creatingBucket && !bucketSavingId && !bucketDeletingId) {
+                setManageBucketsOpen(open);
+                if (!open) {
+                  setNewBucketName("");
+                  setRenamingBucketId(null);
+                }
+              }
+            }}
+          >
+            <DialogTrigger
+              render={<Button size="sm" variant="outline" className="w-full sm:w-auto" />}
+            >
+              Manage Buckets
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle>Manage Buckets</DialogTitle>
+                <DialogDescription>
+                  Buckets are shared across everyone in your organization.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="flex flex-col gap-4">
+                <div className="rounded-xl border bg-muted/20 p-4">
+                  <Label htmlFor="new-bucket-name">Create bucket</Label>
+                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="new-bucket-name"
+                      value={newBucketName}
+                      onChange={(event) => setNewBucketName(event.target.value)}
+                      placeholder="e.g. Payments, AI Infra, Growth"
+                      disabled={creatingBucket}
+                    />
+                    <Button
+                      type="button"
+                      onClick={() => void handleCreateBucket()}
+                      disabled={creatingBucket || !newBucketName.trim()}
+                    >
+                      {creatingBucket ? "Creating..." : "Create Bucket"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex max-h-[22rem] flex-col gap-3 overflow-y-auto pr-1">
+                  {buckets.length === 0 ? (
+                    <div className="rounded-xl border border-dashed bg-muted/10 px-4 py-6 text-sm text-muted-foreground">
+                      No buckets yet. Create your first bucket above.
+                    </div>
+                  ) : (
+                    buckets.map((bucket) => {
+                      const isRenaming = renamingBucketId === bucket.bucket_id;
+                      const draft = renameDrafts[bucket.bucket_id] ?? bucket.name;
+                      return (
+                        <div
+                          key={bucket.bucket_id}
+                          className="rounded-xl border bg-background p-4"
+                        >
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                            {isRenaming ? (
+                              <Input
+                                value={draft}
+                                onChange={(event) =>
+                                  setRenameDrafts((prev) => ({
+                                    ...prev,
+                                    [bucket.bucket_id]: event.target.value,
+                                  }))
+                                }
+                                disabled={bucketSavingId === bucket.bucket_id}
+                              />
+                            ) : (
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-medium">{bucket.name}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {
+                                    companies.filter(
+                                      (company) => company.bucket_id === bucket.bucket_id,
+                                    ).length
+                                  }{" "}
+                                  compan
+                                  {
+                                    companies.filter(
+                                      (company) => company.bucket_id === bucket.bucket_id,
+                                    ).length === 1
+                                      ? "y"
+                                      : "ies"
+                                  }
+                                </p>
+                              </div>
+                            )}
+
+                            <div className="flex flex-wrap items-center gap-2">
+                              {isRenaming ? (
+                                <>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => void handleRenameBucket(bucket.bucket_id)}
+                                    disabled={bucketSavingId === bucket.bucket_id || !draft.trim()}
+                                  >
+                                    {bucketSavingId === bucket.bucket_id ? "Saving..." : "Save"}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setRenamingBucketId(null);
+                                      setRenameDrafts((prev) => ({
+                                        ...prev,
+                                        [bucket.bucket_id]: bucket.name,
+                                      }));
+                                    }}
+                                    disabled={bucketSavingId === bucket.bucket_id}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setRenamingBucketId(bucket.bucket_id)}
+                                  >
+                                    Rename
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="text-destructive"
+                                    onClick={() => void handleDeleteBucket(bucket.bucket_id)}
+                                    disabled={bucketDeletingId === bucket.bucket_id}
+                                  >
+                                    {bucketDeletingId === bucket.bucket_id ? "Deleting..." : "Delete"}
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           <Dialog
             open={runOpen}
@@ -645,141 +1090,169 @@ export default function CompaniesPage() {
           </p>
         </div>
       ) : (
-        <>
-          <div className="grid gap-3 md:hidden">
-            {filteredCompanies.map((company) => (
-              <div
-                key={company.company_id}
-                className="rounded-xl border bg-card p-4 shadow-sm"
-              >
-                <div className="flex items-start gap-3">
-                  <Checkbox
-                    checked={selectedCompanyIds.includes(company.company_id)}
-                    onCheckedChange={(checked) =>
-                      toggleCompanySelection(company.company_id, checked === true)
-                    }
-                    onClick={(e) => e.stopPropagation()}
-                    aria-label={`Select ${company.company_name}`}
-                    className="mt-1"
-                  />
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 flex-col items-start gap-3 text-left"
-                    onClick={() => router.push(`/companies/${company.company_id}`)}
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="break-words text-sm font-semibold leading-snug">
-                          {company.company_name}
-                        </span>
-                        {company.platform_status === "enriching" && (
-                          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
-                        )}
-                      </div>
-                      <p className="mt-1 break-all text-xs text-muted-foreground">
-                        {company.domain}
-                      </p>
-                    </div>
-
-                    <div className="grid w-full gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                      <div className="rounded-lg bg-muted/40 px-3 py-2">
-                        <span className="block text-[11px] uppercase tracking-wide text-muted-foreground/80">
-                          Industry
-                        </span>
-                        <span className="mt-1 block">
-                          {company.platform_status === "enriching" && !company.industry ? (
-                            <ShinyText text="Enriching..." className="text-xs" />
-                          ) : (
-                            company.industry ?? "—"
-                          )}
-                        </span>
-                      </div>
-                      <div className="rounded-lg bg-muted/40 px-3 py-2">
-                        <span className="block text-[11px] uppercase tracking-wide text-muted-foreground/80">
-                          Last Updated
-                        </span>
-                        <span className="mt-1 block">
-                          {company.platform_status === "enriching" && !company.last_agent_run ? (
-                            <ShinyText text="Enriching..." className="text-xs" />
-                          ) : company.last_agent_run ? (
-                            new Date(company.last_agent_run).toLocaleDateString()
-                          ) : (
-                            "—"
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  </button>
+        <div className="flex flex-col gap-6">
+          {bucketGroups.map((group) => (
+            <section key={group.key} className="flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">{group.title}</h2>
+                  <p className="text-xs text-muted-foreground">
+                    {group.companies.length} compan{group.companies.length === 1 ? "y" : "ies"}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
 
-          <div className="hidden overflow-x-auto rounded-xl border md:block">
-            <Table className="w-full table-fixed md:table-auto">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12">Select</TableHead>
-                <TableHead>Company</TableHead>
-                <TableHead className="w-[10rem] sm:w-auto">Domain</TableHead>
-                <TableHead className="hidden md:table-cell">Industry</TableHead>
-                <TableHead className="hidden md:table-cell">Last Updated</TableHead>
+              {group.companies.length === 0 ? (
+                <div className="rounded-xl border border-dashed bg-muted/10 px-4 py-6 text-sm text-muted-foreground">
+                  No companies in this bucket yet.
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-3 md:hidden">
+                    {group.companies.map((company) => (
+                      <div
+                        key={company.company_id}
+                        className="rounded-xl border bg-card p-4 shadow-sm"
+                      >
+                        <div className="flex items-start gap-3">
+                          <Checkbox
+                            checked={selectedCompanyIds.includes(company.company_id)}
+                            onCheckedChange={(checked) =>
+                              toggleCompanySelection(company.company_id, checked === true)
+                            }
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select ${company.company_name}`}
+                            className="mt-1"
+                          />
+                          <button
+                            type="button"
+                            className="flex min-w-0 flex-1 flex-col items-start gap-3 text-left"
+                            onClick={() => router.push(`/companies/${company.company_id}`)}
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="break-words text-sm font-semibold leading-snug">
+                                  {company.company_name}
+                                </span>
+                                {company.platform_status === "enriching" && (
+                                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                                )}
+                              </div>
+                              <p className="mt-1 break-all text-xs text-muted-foreground">
+                                {company.domain}
+                              </p>
+                            </div>
 
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredCompanies.map((company) => (
-                <TableRow
-                  key={company.company_id}
-                  className="cursor-pointer"
-                  onClick={() => router.push(`/companies/${company.company_id}`)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      router.push(`/companies/${company.company_id}`);
-                    }
-                  }}
-                  tabIndex={0}
-                  role="link"
-                >
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      checked={selectedCompanyIds.includes(company.company_id)}
-                      onCheckedChange={(checked) =>
-                        toggleCompanySelection(company.company_id, checked === true)
-                      }
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <span className="flex min-w-0 items-center gap-2 break-words">
-                      {company.company_name}
-                      {company.platform_status === "enriching" && (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                      )}
-                    </span>
-                  </TableCell>
-                  <TableCell className="max-w-[10rem] break-all whitespace-normal text-muted-foreground">
-                    {company.domain}
-                  </TableCell>
-                  <TableCell className="hidden text-muted-foreground md:table-cell">
-                    {company.platform_status === "enriching" && !company.industry
-                      ? <ShinyText text="Enriching..." className="text-sm" />
-                      : company.industry ?? "—"}
-                  </TableCell>
-                  <TableCell className="hidden text-muted-foreground md:table-cell">
-                    {company.platform_status === "enriching" && !company.last_agent_run
-                      ? <ShinyText text="Enriching..." className="text-sm" />
-                      : company.last_agent_run
-                        ? new Date(company.last_agent_run).toLocaleDateString()
-                        : "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-            </Table>
-          </div>
-        </>
+                            <div className="grid w-full gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                              <div className="rounded-lg bg-muted/40 px-3 py-2">
+                                <span className="block text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                                  Industry
+                                </span>
+                                <span className="mt-1 block">
+                                  {company.platform_status === "enriching" && !company.industry ? (
+                                    <ShinyText text="Enriching..." className="text-xs" />
+                                  ) : (
+                                    company.industry ?? "—"
+                                  )}
+                                </span>
+                              </div>
+                              <div className="rounded-lg bg-muted/40 px-3 py-2">
+                                <span className="block text-[11px] uppercase tracking-wide text-muted-foreground/80">
+                                  Last Updated
+                                </span>
+                                <span className="mt-1 block">
+                                  {company.platform_status === "enriching" && !company.last_agent_run ? (
+                                    <ShinyText text="Enriching..." className="text-xs" />
+                                  ) : company.last_agent_run ? (
+                                    new Date(company.last_agent_run).toLocaleDateString()
+                                  ) : (
+                                    "—"
+                                  )}
+                                </span>
+                              </div>
+                            </div>
+                          </button>
+                        </div>
+
+                        <div className="mt-4">
+                          {renderBucketSelect(company)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="hidden overflow-x-auto rounded-xl border md:block">
+                    <Table className="w-full table-fixed lg:table-auto">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="w-12">Select</TableHead>
+                          <TableHead>Company</TableHead>
+                          <TableHead className="w-[10rem]">Domain</TableHead>
+                          <TableHead className="hidden lg:table-cell">Industry</TableHead>
+                          <TableHead className="hidden lg:table-cell">Last Updated</TableHead>
+                          <TableHead className="w-[15rem]">Bucket</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {group.companies.map((company) => (
+                          <TableRow
+                            key={company.company_id}
+                            className="cursor-pointer"
+                            onClick={() => router.push(`/companies/${company.company_id}`)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                router.push(`/companies/${company.company_id}`);
+                              }
+                            }}
+                            tabIndex={0}
+                            role="link"
+                          >
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedCompanyIds.includes(company.company_id)}
+                                onCheckedChange={(checked) =>
+                                  toggleCompanySelection(company.company_id, checked === true)
+                                }
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </TableCell>
+                            <TableCell className="font-medium">
+                              <span className="flex min-w-0 items-center gap-2 break-words">
+                                {company.company_name}
+                                {company.platform_status === "enriching" && (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                )}
+                              </span>
+                            </TableCell>
+                            <TableCell className="max-w-[10rem] break-all whitespace-normal text-muted-foreground">
+                              {company.domain}
+                            </TableCell>
+                            <TableCell className="hidden text-muted-foreground lg:table-cell">
+                              {company.platform_status === "enriching" && !company.industry
+                                ? <ShinyText text="Enriching..." className="text-sm" />
+                                : company.industry ?? "—"}
+                            </TableCell>
+                            <TableCell className="hidden text-muted-foreground lg:table-cell">
+                              {company.platform_status === "enriching" && !company.last_agent_run
+                                ? <ShinyText text="Enriching..." className="text-sm" />
+                                : company.last_agent_run
+                                  ? new Date(company.last_agent_run).toLocaleDateString()
+                                  : "—"}
+                            </TableCell>
+                            <TableCell onClick={(e) => e.stopPropagation()}>
+                              {renderBucketSelect(company, { compact: true })}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
+            </section>
+          ))}
+        </div>
       )}
     </div>
   );
