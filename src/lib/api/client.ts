@@ -250,10 +250,10 @@ export async function searchCatalog(
   return res.json();
 }
 
-export async function getCompanies(): Promise<{ companies: TrackedCompany[]; tracking_limit: number }> {
+export async function getCompanies(): Promise<{ companies: TrackedCompany[] }> {
   const res = await authFetch(`${API_BASE}/companies`);
   const data = await res.json();
-  return { companies: data.companies ?? [], tracking_limit: data.tracking_limit ?? 5 };
+  return { companies: data.companies ?? [] };
 }
 
 export async function untrackCompany(id: string): Promise<void> {

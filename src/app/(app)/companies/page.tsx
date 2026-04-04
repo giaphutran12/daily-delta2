@@ -57,7 +57,6 @@ export default function CompaniesPage() {
   const { currentOrg, user } = useAuth();
 
   const [companies, setCompanies] = useState<TrackedCompany[]>([]);
-  const [trackingLimit, setTrackingLimit] = useState(5);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([]);
@@ -85,9 +84,8 @@ export default function CompaniesPage() {
 
   const fetchCompanies = useCallback(async () => {
     try {
-      const { companies: data, tracking_limit } = await getCompanies();
+      const { companies: data } = await getCompanies();
       setCompanies(data);
-      setTrackingLimit(tracking_limit);
     } catch {
       setCompanies([]);
     }
@@ -351,7 +349,7 @@ export default function CompaniesPage() {
         <div>
           <h1 className="text-xl font-semibold">Tracked Companies</h1>
           <p className="text-sm text-muted-foreground">
-            {companies.length}/{trackingLimit} companies tracked
+            {companies.length} companies tracked
           </p>
         </div>
 
