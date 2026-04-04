@@ -223,6 +223,12 @@ export default function CompanyDetailPage() {
   const [competitorSaving, setCompetitorSaving] = useState(false);
   const [competitorSearchLoading, setCompetitorSearchLoading] = useState(false);
   const [competitorMessage, setCompetitorMessage] = useState<string | null>(null);
+  const [suggestAddCompetitor, setSuggestAddCompetitor] = useState<{
+    name: string;
+    suggestedUrl: string;
+    customUrl: string;
+  } | null>(null);
+  const [addingNewCompetitor, setAddingNewCompetitor] = useState(false);
   const competitorSearchDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const competitorSearchReadyRef = useRef(false);
 
@@ -379,6 +385,7 @@ export default function CompanyDetailPage() {
   ) => {
     setCompetitorSaving(true);
     setCompetitorMessage(null);
+    setSuggestAddCompetitor(null);
     try {
       const result = await addCompetitor(companyId, payload);
       const next = await getCompetitors(companyId);
@@ -438,7 +445,28 @@ export default function CompanyDetailPage() {
       return;
     }
 
-    setCompetitorMessage(`No matching company found for "${trimmed}".`);
+    // No match — offer to add as a new company
+    const slug = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 40);
+    const suggestedUrl = `https://${slug}.com`;
+    setSuggestAddCompetitor({ name: trimmed, suggestedUrl, customUrl: "" });
+    setCompetitorMessage(null);
+  };
+
+  const handleConfirmAddNewCompetitor = async () => {
+    if (!suggestAddCompetitor) return;
+    const url = suggestAddCompetitor.customUrl.trim() || suggestAddCompetitor.suggestedUrl;
+    setAddingNewCompetitor(true);
+    try {
+      await handleAddCompetitor({ website_url: url, page_title: suggestAddCompetitor.name });
+      setSuggestAddCompetitor(null);
+      setCompetitorMessage(
+        `${suggestAddCompetitor.name} added. We're gathering intel now — first signals will appear shortly.`,
+      );
+    } catch {
+      // handleAddCompetitor already sets competitorMessage on error
+    } finally {
+      setAddingNewCompetitor(false);
+    }
   };
 
   const handleManualRun = async () => {
@@ -638,13 +666,51 @@ export default function CompanyDetailPage() {
               />
             </div>
 
-            {competitorMessage && (
+            {suggestAddCompetitor && (
+              <div className="mt-3 rounded-lg border bg-muted/30 p-4">
+                <p className="text-sm font-medium">
+                  &ldquo;{suggestAddCompetitor.name}&rdquo; isn&apos;t tracked yet. Add it?
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder={suggestAddCompetitor.suggestedUrl}
+                    value={suggestAddCompetitor.customUrl}
+                    onChange={(e) =>
+                      setSuggestAddCompetitor((prev) =>
+                        prev ? { ...prev, customUrl: e.target.value } : prev,
+                      )
+                    }
+                    className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  <Button
+                    size="sm"
+                    disabled={addingNewCompetitor}
+                    onClick={handleConfirmAddNewCompetitor}
+                  >
+                    {addingNewCompetitor ? "Adding..." : "Add"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setSuggestAddCompetitor(null)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Enter the company website, or press Add to use {suggestAddCompetitor.suggestedUrl}
+                </p>
+              </div>
+            )}
+
+            {competitorMessage && !suggestAddCompetitor && (
               <p className="mt-2 text-xs text-muted-foreground">{competitorMessage}</p>
             )}
 
-            {!competitorsLoading ? (
+            {!competitorsLoading && !suggestAddCompetitor ? (
               <p className="mt-2 text-xs text-muted-foreground">
-                Start typing to see suggestions. Press Enter to add the top exact-enough match or a website.
+                Type a company name or website URL. If it&apos;s not tracked yet, we&apos;ll offer to add it.
               </p>
             ) : null}
           </div>
