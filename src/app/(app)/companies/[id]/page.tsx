@@ -537,8 +537,8 @@ export default function CompanyDetailPage() {
   return (
     <div className="flex flex-col gap-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-1 min-w-0">
           <button
             onClick={() => router.push("/companies")}
             className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors w-fit"
@@ -547,8 +547,8 @@ export default function CompanyDetailPage() {
             Companies
           </button>
           <h1 className="text-xl font-semibold">{company!.company_name}</h1>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+            <span className="break-words min-w-0">
               {[
                 company!.industry,
                 company!.domain,
@@ -562,7 +562,7 @@ export default function CompanyDetailPage() {
             {company!.last_agent_run && (
               <>
                 <span className="text-muted-foreground/40">|</span>
-                <span className="flex items-center gap-1 text-xs">
+                <span className="flex items-center gap-1 text-xs whitespace-nowrap">
                   <Clock className="h-3 w-3" />
                   Updated {formatRelativeTime(company!.last_agent_run)}
                 </span>
@@ -571,7 +571,7 @@ export default function CompanyDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             size="sm"
             variant="outline"
@@ -732,7 +732,7 @@ export default function CompanyDetailPage() {
                 <p className="text-sm font-medium">
                   &ldquo;{suggestAddCompetitor.name}&rdquo; isn&apos;t tracked yet. Add it?
                 </p>
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   <input
                     type="text"
                     placeholder={suggestAddCompetitor.suggestedUrl}
@@ -742,22 +742,24 @@ export default function CompanyDetailPage() {
                         prev ? { ...prev, customUrl: e.target.value } : prev,
                       )
                     }
-                    className="flex-1 rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    className="min-w-0 flex-1 basis-full sm:basis-auto rounded-md border bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
                   />
-                  <Button
-                    size="sm"
-                    disabled={addingNewCompetitor}
-                    onClick={handleConfirmAddNewCompetitor}
-                  >
-                    {addingNewCompetitor ? "Adding..." : "Add"}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setSuggestAddCompetitor(null)}
-                  >
-                    Cancel
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      disabled={addingNewCompetitor}
+                      onClick={handleConfirmAddNewCompetitor}
+                    >
+                      {addingNewCompetitor ? "Adding..." : "Add"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setSuggestAddCompetitor(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
                 <p className="mt-1.5 text-xs text-muted-foreground">
                   Enter the company website, or press Add to use {suggestAddCompetitor.suggestedUrl}

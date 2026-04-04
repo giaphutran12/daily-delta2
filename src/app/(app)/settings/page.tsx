@@ -367,82 +367,84 @@ export default function SettingsPage() {
                     ))}
                   </div>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Member</TableHead>
-                        <TableHead>Role</TableHead>
-                        {canManage && (
-                          <TableHead className="text-right">Actions</TableHead>
-                        )}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {members.map((m) => {
-                        const isPending = m.status === "pending";
-                        return (
-                          <TableRow
-                            key={m.id}
-                            className={isPending ? "bg-amber-50/50 dark:bg-amber-950/20" : ""}
-                          >
-                            <TableCell className="font-medium">
-                              <div className="flex items-center gap-2">
-                                {m.email ?? m.user_id}
-                                {isPending && (
-                                  <Badge
-                                    variant="outline"
-                                    className="text-[10px] border-amber-400 text-amber-600"
-                                  >
-                                    Pending
-                                  </Badge>
-                                )}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <Badge
-                                variant={
-                                  m.role === "owner"
-                                    ? "default"
-                                    : m.role === "admin"
-                                      ? "secondary"
-                                      : "outline"
-                                }
-                              >
-                                {ROLE_LABELS[m.role] ?? m.role}
-                              </Badge>
-                            </TableCell>
-                            {canManage && (
-                              <TableCell className="text-right">
-                                {isPending ? (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-muted-foreground hover:text-destructive"
-                                    aria-label={`Cancel invitation for ${m.email}`}
-                                    onClick={() => setCancelInviteId(m.id)}
-                                  >
-                                    Cancel
-                                  </Button>
-                                ) : (
-                                  isOwner && m.role !== "owner" && (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Member</TableHead>
+                          <TableHead>Role</TableHead>
+                          {canManage && (
+                            <TableHead className="text-right">Actions</TableHead>
+                          )}
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {members.map((m) => {
+                          const isPending = m.status === "pending";
+                          return (
+                            <TableRow
+                              key={m.id}
+                              className={isPending ? "bg-amber-50/50 dark:bg-amber-950/20" : ""}
+                            >
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-2">
+                                  {m.email ?? m.user_id}
+                                  {isPending && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] border-amber-400 text-amber-600"
+                                    >
+                                      Pending
+                                    </Badge>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={
+                                    m.role === "owner"
+                                      ? "default"
+                                      : m.role === "admin"
+                                        ? "secondary"
+                                        : "outline"
+                                  }
+                                >
+                                  {ROLE_LABELS[m.role] ?? m.role}
+                                </Badge>
+                              </TableCell>
+                              {canManage && (
+                                <TableCell className="text-right">
+                                  {isPending ? (
                                     <Button
                                       variant="ghost"
                                       size="sm"
-                                      className="text-destructive hover:text-destructive"
-                                      aria-label={`Remove ${m.email ?? m.user_id}`}
-                                      onClick={() => m.user_id && setRemoveMemberId(m.user_id)}
+                                      className="text-muted-foreground hover:text-destructive"
+                                      aria-label={`Cancel invitation for ${m.email}`}
+                                      onClick={() => setCancelInviteId(m.id)}
                                     >
-                                      <TrashIcon className="h-4 w-4" />
+                                      Cancel
                                     </Button>
-                                  )
-                                )}
-                              </TableCell>
-                            )}
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                   </Table>
+                                  ) : (
+                                    isOwner && m.role !== "owner" && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-destructive hover:text-destructive"
+                                        aria-label={`Remove ${m.email ?? m.user_id}`}
+                                        onClick={() => m.user_id && setRemoveMemberId(m.user_id)}
+                                      >
+                                        <TrashIcon className="h-4 w-4" />
+                                      </Button>
+                                    )
+                                  )}
+                                </TableCell>
+                              )}
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
                  )}
 
                  {cancelInviteError && (
@@ -454,7 +456,7 @@ export default function SettingsPage() {
                     <Label className="text-sm font-medium">
                       Invite New Member
                     </Label>
-                    <div className="flex gap-2">
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Input
                         type="email"
                         placeholder="user@example.com"
@@ -464,26 +466,28 @@ export default function SettingsPage() {
                         className="flex-1"
                         aria-label="Invite email address"
                       />
-                      <Select
-                        value={inviteRole}
-                        onValueChange={(v) =>
-                          setInviteRole(v as "member" | "admin")
-                        }
-                      >
-                        <SelectTrigger className="w-28" aria-label="Invite role">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="member">Member</SelectItem>
-                          <SelectItem value="admin">Admin</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        onClick={handleInvite}
-                        disabled={inviteLoading || !inviteEmail.trim()}
-                      >
-                        {inviteLoading ? "Inviting..." : "Invite"}
-                      </Button>
+                      <div className="flex gap-2">
+                        <Select
+                          value={inviteRole}
+                          onValueChange={(v) =>
+                            setInviteRole(v as "member" | "admin")
+                          }
+                        >
+                          <SelectTrigger className="w-28 shrink-0" aria-label="Invite role">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="member">Member</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          onClick={handleInvite}
+                          disabled={inviteLoading || !inviteEmail.trim()}
+                        >
+                          {inviteLoading ? "Inviting..." : "Invite"}
+                        </Button>
+                      </div>
                     </div>
                     {inviteError && (
                       <p className="text-sm text-destructive">{inviteError}</p>
