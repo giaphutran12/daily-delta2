@@ -77,7 +77,6 @@ export default function CompaniesPage() {
   const [manageBucketsOpen, setManageBucketsOpen] = useState(false);
   const [newBucketName, setNewBucketName] = useState("");
   const [creatingBucket, setCreatingBucket] = useState(false);
-  const [renamingBucketId, setRenamingBucketId] = useState<string | null>(null);
   const [renameDrafts, setRenameDrafts] = useState<Record<string, string>>({});
   const [bucketSavingId, setBucketSavingId] = useState<string | null>(null);
   const [bucketDeletingId, setBucketDeletingId] = useState<string | null>(null);
@@ -395,7 +394,6 @@ export default function CompaniesPage() {
         prev.map((entry) => (entry.bucket_id === bucketId ? bucket : entry)),
       );
       setRenameDrafts((prev) => ({ ...prev, [bucketId]: bucket.name }));
-      setRenamingBucketId(null);
       toast.success(`Renamed bucket to "${bucket.name}".`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to rename bucket");
@@ -795,159 +793,6 @@ export default function CompaniesPage() {
           >
             {allVisibleSelected ? "Clear visible selection" : "Select visible"}
           </Button>
-
-          <Dialog
-            open={manageBucketsOpen}
-            onOpenChange={(open) => {
-              if (!creatingBucket && !bucketSavingId && !bucketDeletingId) {
-                setManageBucketsOpen(open);
-                if (!open) {
-                  setNewBucketName("");
-                  setRenamingBucketId(null);
-                }
-              }
-            }}
-          >
-            <DialogTrigger
-              render={<Button size="sm" variant="outline" className="w-full sm:w-auto" />}
-            >
-              Manage Buckets
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-xl">
-              <DialogHeader>
-                <DialogTitle>Manage Buckets</DialogTitle>
-                <DialogDescription>
-                  Buckets are shared across everyone in your organization.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="flex flex-col gap-4">
-                <div className="rounded-xl border bg-muted/20 p-4">
-                  <Label htmlFor="new-bucket-name">Create bucket</Label>
-                  <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                    <Input
-                      id="new-bucket-name"
-                      value={newBucketName}
-                      onChange={(event) => setNewBucketName(event.target.value)}
-                      placeholder="e.g. Payments, AI Infra, Growth"
-                      disabled={creatingBucket}
-                    />
-                    <Button
-                      type="button"
-                      onClick={() => void handleCreateBucket()}
-                      disabled={creatingBucket || !newBucketName.trim()}
-                    >
-                      {creatingBucket ? "Creating..." : "Create Bucket"}
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="flex max-h-[22rem] flex-col gap-3 overflow-y-auto pr-1">
-                  {buckets.length === 0 ? (
-                    <div className="rounded-xl border border-dashed bg-muted/10 px-4 py-6 text-sm text-muted-foreground">
-                      No buckets yet. Create your first bucket above.
-                    </div>
-                  ) : (
-                    buckets.map((bucket) => {
-                      const isRenaming = renamingBucketId === bucket.bucket_id;
-                      const draft = renameDrafts[bucket.bucket_id] ?? bucket.name;
-                      return (
-                        <div
-                          key={bucket.bucket_id}
-                          className="rounded-xl border bg-background p-4"
-                        >
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                            {isRenaming ? (
-                              <Input
-                                value={draft}
-                                onChange={(event) =>
-                                  setRenameDrafts((prev) => ({
-                                    ...prev,
-                                    [bucket.bucket_id]: event.target.value,
-                                  }))
-                                }
-                                disabled={bucketSavingId === bucket.bucket_id}
-                              />
-                            ) : (
-                              <div className="min-w-0 flex-1">
-                                <p className="text-sm font-medium">{bucket.name}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {
-                                    companies.filter(
-                                      (company) => company.bucket_id === bucket.bucket_id,
-                                    ).length
-                                  }{" "}
-                                  compan
-                                  {
-                                    companies.filter(
-                                      (company) => company.bucket_id === bucket.bucket_id,
-                                    ).length === 1
-                                      ? "y"
-                                      : "ies"
-                                  }
-                                </p>
-                              </div>
-                            )}
-
-                            <div className="flex flex-wrap items-center gap-2">
-                              {isRenaming ? (
-                                <>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={() => void handleRenameBucket(bucket.bucket_id)}
-                                    disabled={bucketSavingId === bucket.bucket_id || !draft.trim()}
-                                  >
-                                    {bucketSavingId === bucket.bucket_id ? "Saving..." : "Save"}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      setRenamingBucketId(null);
-                                      setRenameDrafts((prev) => ({
-                                        ...prev,
-                                        [bucket.bucket_id]: bucket.name,
-                                      }));
-                                    }}
-                                    disabled={bucketSavingId === bucket.bucket_id}
-                                  >
-                                    Cancel
-                                  </Button>
-                                </>
-                              ) : (
-                                <>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setRenamingBucketId(bucket.bucket_id)}
-                                  >
-                                    Rename
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    className="text-destructive"
-                                    onClick={() => void handleDeleteBucket(bucket.bucket_id)}
-                                    disabled={bucketDeletingId === bucket.bucket_id}
-                                  >
-                                    {bucketDeletingId === bucket.bucket_id ? "Deleting..." : "Delete"}
-                                  </Button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
 
           <Dialog
             open={runOpen}
