@@ -68,7 +68,7 @@ function renderAiSummaryHtml(summary: string, summaryType?: string): string {
           '<h4 style="margin:12px 0 4px;font-family:' +
           serif +
           ';font-size:15px;color:#1a1a1a;">' +
-          t.replace(/^###\s*/, "").replace(/\*\*/g, "") +
+          escapeHtml(t.replace(/^###\s*/, "").replace(/\*\*/g, "")) +
           "</h4>"
         );
       if (t.startsWith("##"))
@@ -76,26 +76,26 @@ function renderAiSummaryHtml(summary: string, summaryType?: string): string {
           '<h3 style="margin:14px 0 4px;font-family:' +
           serif +
           ';font-size:16px;color:#1a1a1a;">' +
-          t.replace(/^##\s*/, "").replace(/\*\*/g, "") +
+          escapeHtml(t.replace(/^##\s*/, "").replace(/\*\*/g, "")) +
           "</h3>"
         );
       if (t.startsWith("#"))
         return (
-          '<h3 style="margin:14px 0 4px;font-family:' +
+          '<h2 style="margin:14px 0 4px;font-family:' +
           serif +
           ';font-size:17px;color:#1a1a1a;">' +
-          t.replace(/^#\s*/, "").replace(/\*\*/g, "") +
-          "</h3>"
+          escapeHtml(t.replace(/^#\s*/, "").replace(/\*\*/g, "")) +
+          "</h2>"
         );
       if (t.startsWith("**") && t.endsWith("**"))
         return (
           '<h4 style="margin:12px 0 4px;font-family:' +
           serif +
           ';font-size:15px;color:#1a1a1a;">' +
-          t.replace(/\*\*/g, "") +
+          escapeHtml(t.replace(/\*\*/g, "")) +
           "</h4>"
         );
-      const rendered = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      const rendered = escapeHtml(t).replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
       if (/^[-*]\s/.test(t))
         return (
           '<p style="margin:2px 0;padding-left:16px;font-family:' +
@@ -120,9 +120,8 @@ function renderAiSummaryHtml(summary: string, summaryType?: string): string {
                   <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:36px;">
                     <tr>
                       <td style="padding-bottom:10px;border-bottom:1px solid #1a1a1a;">
-                        <span style="font-family:${mono};font-size:10px;letter-spacing:1px;color:#999;text-transform:uppercase;">SEC_00</span>
                         <h2 style="margin:4px 0 0;font-family:${serif};font-size:18px;font-weight:normal;color:#1a1a1a;letter-spacing:-0.3px;">
-                          ${sectionTitle}
+                          ${escapeHtml(sectionTitle)}
                         </h2>
                       </td>
                     </tr>
@@ -155,27 +154,21 @@ export function buildReportEmail(
       const sectionKey = String(idx + 1).padStart(2, "0");
       const entries = section.items
         .map((item) => {
+          const sourceName = escapeHtml(item.source || "source");
           const sourceLink = item.url
-            ? `<a href="${item.url}" style="color:#1342FF;text-decoration:none;font-family:${mono};font-size:11px;">[${item.source}]</a>`
-            : "";
+            ? `<a href="${item.url}" style="color:#1342FF;text-decoration:none;font-family:${mono};font-size:11px;">${sourceName} ↗</a>`
+            : `<span style="font-family:${mono};font-size:11px;color:#999;">${sourceName}</span>`;
           const dateStr = item.detected_at
             ? new Date(item.detected_at).toLocaleDateString("en-US", {
                 month: "short",
                 day: "numeric",
-                year: "numeric",
               })
             : "";
           return `
             <tr>
-              <td style="padding:12px 0;border-bottom:1px solid #e8e8e8;vertical-align:top;">
+              <td style="padding:8px 0;border-bottom:1px solid #e8e8e8;vertical-align:top;">
                 <p style="margin:0;font-family:${serif};font-size:14px;line-height:1.6;color:#1a1a1a;">
-                  <strong>${item.title}</strong> ${sourceLink}
-                </p>
-                <p style="margin:6px 0 0;font-family:${serif};font-size:13px;line-height:1.55;color:#4a4a4a;">
-                  ${item.summary}
-                </p>
-                <p style="margin:4px 0 0;font-family:${mono};font-size:10px;letter-spacing:0.5px;color:#999;text-transform:uppercase;">
-                  via ${item.source}${dateStr ? ` &middot; ${dateStr}` : ""}
+                  ${escapeHtml(item.title)} &nbsp;${sourceLink}${dateStr ? ` <span style="font-family:${mono};font-size:10px;color:#999;">${dateStr}</span>` : ""}
                 </p>
               </td>
             </tr>`;
@@ -183,12 +176,12 @@ export function buildReportEmail(
         .join("");
 
       return `
-        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:36px;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
           <tr>
-            <td style="padding-bottom:10px;border-bottom:1px solid #1a1a1a;">
+            <td style="padding-bottom:8px;border-bottom:1px solid #1a1a1a;">
               <span style="font-family:${mono};font-size:10px;letter-spacing:1px;color:#999;text-transform:uppercase;">SEC_${sectionKey}</span>
               <h2 style="margin:4px 0 0;font-family:${serif};font-size:18px;font-weight:normal;color:#1a1a1a;letter-spacing:-0.3px;">
-                ${section.display_name}
+                ${escapeHtml(section.display_name)}
               </h2>
             </td>
           </tr>
@@ -224,17 +217,14 @@ export function buildReportEmail(
           <td align="center" style="padding:32px 16px;">
             <table width="100%" cellpadding="0" cellspacing="0" style="max-width:960px;background:#ffffff;border:1px solid #e0e0e0;">
 
-              <!-- Header title block -->
+              <!-- Header -->
               <tr>
-                <td style="padding:48px 40px 0;">
-                  <p style="margin:0;font-family:${mono};font-size:10px;letter-spacing:2px;color:#999;text-transform:uppercase;">
-                    Daily Delta
-                  </p>
-                  <h1 style="margin:8px 0 0;font-family:${serif};font-size:28px;font-weight:normal;color:#1a1a1a;letter-spacing:-0.5px;line-height:1.2;">
-                    Signal Intelligence Report
+                <td style="padding:40px 40px 0;">
+                  <h1 style="margin:0;font-family:${serif};font-size:24px;font-weight:normal;color:#1a1a1a;letter-spacing:-0.5px;line-height:1.2;">
+                    ${escapeHtml(company.company_name)}
                   </h1>
-                  <p style="margin:12px 0 0;font-family:${mono};font-size:11px;letter-spacing:0.5px;color:#666;text-transform:uppercase;">
-                    ${company.company_name}
+                  <p style="margin:6px 0 0;font-family:${mono};font-size:11px;letter-spacing:0.5px;color:#666;">
+                    ${dateFormatted}
                   </p>
                 </td>
               </tr>
@@ -242,61 +232,6 @@ export function buildReportEmail(
               <!-- Divider -->
               <tr>
                 <td style="padding:20px 40px 0;">
-                  <p style="margin:0;font-family:${mono};font-size:10px;color:#ccc;letter-spacing:2px;">
-                    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-                  </p>
-                </td>
-              </tr>
-
-              <!-- Metadata block -->
-              <tr>
-                <td style="padding:20px 40px 0;">
-                  <table width="100%" cellpadding="0" cellspacing="0">
-                    <tr>
-                      <td width="50%" style="vertical-align:top;">
-                        <p style="margin:0;font-family:${mono};font-size:10px;letter-spacing:0.5px;color:#999;text-transform:uppercase;">Date</p>
-                        <p style="margin:2px 0 0;font-family:${serif};font-size:13px;color:#1a1a1a;">${dateFormatted}</p>
-                      </td>
-                      <td width="50%" style="vertical-align:top;">
-                        <p style="margin:0;font-family:${mono};font-size:10px;letter-spacing:0.5px;color:#999;text-transform:uppercase;">Time</p>
-                        <p style="margin:2px 0 0;font-family:${serif};font-size:13px;color:#1a1a1a;">${timeFormatted}</p>
-                      </td>
-                    </tr>
-                    <tr>
-                      <td width="50%" style="vertical-align:top;padding-top:12px;">
-                        <p style="margin:0;font-family:${mono};font-size:10px;letter-spacing:0.5px;color:#999;text-transform:uppercase;">Website</p>
-                        <p style="margin:2px 0 0;font-family:${mono};font-size:12px;">
-                          <a href="${company.website_url}" style="color:#1342FF;text-decoration:none;">${company.website_url}</a>
-                        </p>
-                      </td>
-                      <td width="50%" style="vertical-align:top;padding-top:12px;">
-                        ${
-                          company.industry
-                            ? `
-                        <p style="margin:0;font-family:${mono};font-size:10px;letter-spacing:0.5px;color:#999;text-transform:uppercase;">Industry</p>
-                        <p style="margin:2px 0 0;font-family:${serif};font-size:13px;color:#1a1a1a;">${company.industry}</p>
-                        `
-                            : ""
-                        }
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-
-              <!-- Company overview -->
-              <tr>
-                <td style="padding:28px 40px 0;">
-                  <p style="margin:0;font-family:${mono};font-size:10px;letter-spacing:0.5px;color:#999;text-transform:uppercase;">Company Overview</p>
-                  <p style="margin:8px 0 0;font-family:${serif};font-size:14px;line-height:1.65;color:#333;">
-                    ${report.company_overview}
-                  </p>
-                </td>
-              </tr>
-
-              <!-- Divider -->
-              <tr>
-                <td style="padding:28px 40px 0;">
                   <div style="border-top:1px solid #1a1a1a;"></div>
                 </td>
               </tr>
@@ -314,19 +249,12 @@ export function buildReportEmail(
 
               <!-- Footer -->
               <tr>
-                <td style="padding:12px 40px 48px;">
-                  <p style="margin:0;font-family:${mono};font-size:10px;color:#ccc;letter-spacing:2px;">
-                    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
-                  </p>
-                  <p style="margin:16px 0 0;font-family:${mono};font-size:10px;letter-spacing:0.5px;color:#999;text-transform:uppercase;text-align:center;">
-                    Daily Delta &mdash; Automated Intelligence Report
-                  </p>
-                  <p style="margin:4px 0 0;font-family:${mono};font-size:10px;color:#bbb;text-align:center;">
-                    A CSV file with structured data is attached to this email.
-                  </p>
-                  <p style="margin:16px 0 0;font-family:${mono};font-size:10px;text-align:center;color:#ccc;">
-                    ╌╌ END ╌╌
-                  </p>
+                <td style="padding:24px 40px 40px;">
+                  <div style="border-top:1px solid #e0e0e0;padding-top:16px;">
+                    <p style="margin:0;font-family:${mono};font-size:10px;color:#999;text-align:center;">
+                      Daily Delta &middot; CSV attached
+                    </p>
+                  </div>
                 </td>
               </tr>
 
@@ -426,63 +354,27 @@ async function generateDigestTldr(
   digestCompanies: DigestCompany[],
 ): Promise<string> {
   const changedCompanies = digestCompanies
-    .filter((company) => company.status === "changed" && company.findings.length > 0)
+    .filter((dc) => dc.status === "changed" && dc.findings.length > 0)
     .sort((a, b) => b.findings.length - a.findings.length);
 
-  const totalSignals = changedCompanies.reduce(
-    (sum, dc) => sum + dc.findings.length,
-    0,
-  );
-  if (changedCompanies.length === 0 || totalSignals === 0) {
-    return "";
+  if (changedCompanies.length === 0) return "";
+
+  // One bullet per company: top signal, hyperlinked to source
+  const bullets = changedCompanies.map((dc) => {
+    const top = dc.findings[0];
+    const sourceName = escapeHtml(top.source || "source");
+    const link = top.url
+      ? `<a href="${top.url}" style="color:#1342FF;text-decoration:none;">${sourceName} ↗</a>`
+      : sourceName;
+    return `<li style="margin:4px 0;line-height:1.5;">${escapeHtml(dc.company.company_name)} &mdash; ${escapeHtml(top.title)} [${link}]</li>`;
+  });
+
+  const noChangeCount = digestCompanies.filter((dc) => dc.status === "no_change").length;
+  if (noChangeCount > 0) {
+    bullets.push(`<li style="margin:4px 0;line-height:1.5;color:#888;">${noChangeCount} compan${noChangeCount === 1 ? "y" : "ies"} unchanged</li>`);
   }
 
-  const noChangeCount = digestCompanies.filter(
-    (company) => company.status === "no_change",
-  ).length;
-  const failedCount = digestCompanies.filter(
-    (company) => company.status === "failed",
-  ).length;
-  const highlightedCompanies = changedCompanies.slice(0, 3);
-  const highlightedSummary = highlightedCompanies
-    .map((company) => {
-      const primaryFinding = company.findings[0];
-      const signalType = primaryFinding
-        ? getSignalTypeLabel(primaryFinding.signal_type).toLowerCase()
-        : "signals";
-
-      return `${company.company.company_name} (${company.findings.length} new ${company.findings.length === 1 ? "signal" : "signals"}, led by ${signalType})`;
-    })
-    .join(", ");
-
-  const remainingCompanies = changedCompanies.length - highlightedCompanies.length;
-  const summaryParts = [
-    `${highlightedSummary} stood out in this run.`,
-    `We detected ${totalSignals} new signals across ${changedCompanies.length} compan${changedCompanies.length === 1 ? "y" : "ies"}.`,
-  ];
-
-  if (remainingCompanies > 0) {
-    summaryParts.push(
-      `${remainingCompanies} additional compan${remainingCompanies === 1 ? "y" : "ies"} with changes appear in the detailed sections below.`,
-    );
-  }
-
-  if (noChangeCount > 0 || failedCount > 0) {
-    const outcomeNotes = [];
-    if (noChangeCount > 0) {
-      outcomeNotes.push(
-        `${noChangeCount} compan${noChangeCount === 1 ? "y had" : "ies had"} no new signals`,
-      );
-    }
-    if (failedCount > 0) {
-      outcomeNotes.push(
-        `${failedCount} compan${failedCount === 1 ? "y" : "ies"} failed to process`,
-      );
-    }
-    summaryParts.push(`${outcomeNotes.join(", ")}.`);
-  }
-
-  return summaryParts.join(" ");
+  return `<ul style="margin:0;padding-left:18px;">${bullets.join("")}</ul>`;
 }
 
 function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): string {
@@ -506,56 +398,18 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
   const noChangeCount = digestCompanies.filter((dc) => dc.status === "no_change").length;
   const failedCount = digestCompanies.filter((dc) => dc.status === "failed").length;
 
-  // Build company sections
-  const companySectionsHtml = digestCompanies.map((dc, companyIdx) => {
-    const { company, findings, status, error } = dc;
+  // Separate companies with signals from those without
+  const changedCompanies = digestCompanies.filter((dc) => dc.status === "changed" && dc.findings.length > 0);
+  const noChangeNames = digestCompanies
+    .filter((dc) => dc.status === "no_change" || (dc.status === "changed" && dc.findings.length === 0))
+    .map((dc) => escapeHtml(dc.company.company_name));
+  const failedNames = digestCompanies
+    .filter((dc) => dc.status === "failed")
+    .map((dc) => escapeHtml(dc.company.company_name));
 
-    const metaLabel =
-      status === "failed"
-        ? "Pipeline failed"
-        : status === "no_change"
-          ? "No new signals"
-          : `${findings.length} new signal${findings.length !== 1 ? "s" : ""}`;
-
-    if (status === "failed") {
-      return `
-      <tr>
-        <td style="padding:${companyIdx === 0 ? "0" : "32px"} 40px 0;">
-          ${companyIdx > 0 ? `<div style="border-top:3px solid #1a1a1a;margin-bottom:32px;"></div>` : ""}
-          <h2 style="margin:0 0 4px;font-family:${serif};font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:-0.3px;">
-            ${company.company_name}
-          </h2>
-          <p style="margin:0 0 20px;font-family:${serif};font-size:13px;color:#666;">
-            ${company.domain}${company.industry ? ` · ${company.industry}` : ""} · ${metaLabel}
-          </p>
-          <div style="padding:16px 18px;border:1px solid #f0d0d0;background:#fff7f7;">
-            <p style="margin:0;font-family:${serif};font-size:14px;line-height:1.6;color:#7a1f1f;">
-              <strong>Pipeline Failed:</strong> ${escapeHtml(error || "An unknown error occurred while generating this company summary.")}
-            </p>
-          </div>
-        </td>
-      </tr>`;
-    }
-
-    if (status === "no_change") {
-      return `
-      <tr>
-        <td style="padding:${companyIdx === 0 ? "0" : "32px"} 40px 0;">
-          ${companyIdx > 0 ? `<div style="border-top:3px solid #1a1a1a;margin-bottom:32px;"></div>` : ""}
-          <h2 style="margin:0 0 4px;font-family:${serif};font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:-0.3px;">
-            ${company.company_name}
-          </h2>
-          <p style="margin:0 0 20px;font-family:${serif};font-size:13px;color:#666;">
-            ${company.domain}${company.industry ? ` · ${company.industry}` : ""} · ${metaLabel}
-          </p>
-          <div style="padding:16px 18px;border:1px solid #e6e6e6;background:#fafafa;">
-            <p style="margin:0;font-family:${serif};font-size:14px;line-height:1.6;color:#555;">
-              No new signals were detected for this company in this request.
-            </p>
-          </div>
-        </td>
-      </tr>`;
-    }
+  // Build company sections — only for companies with signals
+  const companySectionsHtml = changedCompanies.map((dc, companyIdx) => {
+    const { company, findings } = dc;
 
     // Group findings by signal_type
     const byType = new Map<string, SignalFinding[]>();
@@ -564,63 +418,51 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
       byType.get(f.signal_type)!.push(f);
     }
 
-    const typeSectionsHtml = [...byType.entries()].map(([signalType, signals]) => {
-      const signalRows = signals.map((s) => {
+    const signalRows = [...byType.entries()].map(([signalType, signals]) => {
+      const typeLabel = escapeHtml(getSignalTypeLabel(signalType));
+      const rows = signals.map((s) => {
+        const sourceName = escapeHtml(s.source || "source");
         const sourceLink = s.url
-          ? `<a href="${s.url}" style="color:#1342FF;text-decoration:none;">[source]</a>`
-          : "";
+          ? `<a href="${s.url}" style="color:#1342FF;text-decoration:none;">${sourceName} ↗</a>`
+          : `<span style="color:#888;">${sourceName}</span>`;
         const dateStr = s.detected_at
-          ? new Date(s.detected_at).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })
+          ? new Date(s.detected_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
           : "";
-        return `
-          <tr>
-            <td style="padding:12px 0;border-bottom:1px solid #e8e8e8;vertical-align:top;">
-              <p style="margin:0;font-family:${serif};font-size:15px;line-height:1.5;color:#1a1a1a;">
-                <strong>${s.title}</strong> ${sourceLink}
-              </p>
-              <p style="margin:6px 0 0;font-family:${serif};font-size:14px;line-height:1.6;color:#444;">
-                ${s.summary}
-              </p>
-              <p style="margin:6px 0 0;font-family:${serif};font-size:12px;color:#888;">
-                ${s.source}${dateStr ? ` · ${dateStr}` : ""}
-              </p>
-            </td>
-          </tr>`;
-      }).join("");
-
-      return `
-        <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-          <tr>
-            <td style="padding-bottom:8px;border-bottom:2px solid #333;">
-              <h3 style="margin:0;font-family:${serif};font-size:16px;font-weight:600;color:#1a1a1a;">
-                ${getSignalTypeLabel(signalType)}
-                <span style="font-weight:normal;color:#666;"> (${signals.length})</span>
-              </h3>
-            </td>
-          </tr>
-          ${signalRows}
-        </table>`;
+        return `<tr><td style="padding:6px 0;border-bottom:1px solid #f0f0f0;font-family:${serif};font-size:14px;line-height:1.5;color:#1a1a1a;">
+          <span style="font-family:${mono};font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;">${typeLabel}</span> &nbsp;${escapeHtml(s.title)} &nbsp;${sourceLink}${dateStr ? ` <span style="font-family:${mono};font-size:10px;color:#999;">${dateStr}</span>` : ""}
+        </td></tr>`;
+      });
+      return rows.join("");
     }).join("");
 
     return `
-      <!-- Company ${companyIdx + 1} -->
       <tr>
-        <td style="padding:${companyIdx === 0 ? "0" : "32px"} 40px 0;">
-          ${companyIdx > 0 ? `<div style="border-top:3px solid #1a1a1a;margin-bottom:32px;"></div>` : ""}
-          <h2 style="margin:0 0 4px;font-family:${serif};font-size:22px;font-weight:700;color:#1a1a1a;letter-spacing:-0.3px;">
-            ${company.company_name}
+        <td style="padding:${companyIdx === 0 ? "0" : "24px"} 40px 0;">
+          ${companyIdx > 0 ? `<div style="border-top:2px solid #1a1a1a;margin-bottom:20px;"></div>` : ""}
+          <h2 style="margin:0 0 2px;font-family:${serif};font-size:20px;font-weight:700;color:#1a1a1a;">
+            ${escapeHtml(company.company_name)}
           </h2>
-          <p style="margin:0 0 20px;font-family:${serif};font-size:13px;color:#666;">
-            ${company.domain}${company.industry ? ` · ${company.industry}` : ""} · ${metaLabel}
+          <p style="margin:0 0 12px;font-family:${mono};font-size:11px;color:#888;">
+            ${findings.length} signal${findings.length !== 1 ? "s" : ""}
           </p>
-          ${typeSectionsHtml}
+          <table width="100%" cellpadding="0" cellspacing="0">
+            ${signalRows}
+          </table>
         </td>
       </tr>`;
   }).join("");
+
+  // Footer line for unchanged/failed companies
+  const footerNotes: string[] = [];
+  if (noChangeNames.length > 0) {
+    footerNotes.push(`${noChangeNames.length} compan${noChangeNames.length === 1 ? "y" : "ies"} unchanged`);
+  }
+  if (failedNames.length > 0) {
+    footerNotes.push(`${failedNames.length} failed`);
+  }
+  const unchangedFooter = footerNotes.length > 0
+    ? `<tr><td style="padding:20px 40px 0;"><p style="margin:0;font-family:${mono};font-size:11px;color:#999;">${footerNotes.join(" · ")}</p></td></tr>`
+    : "";
 
   return `
     <!DOCTYPE html>
@@ -642,7 +484,7 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
                     Report for ${dateFormatted}
                   </p>
                   <p style="margin:8px 0 0;font-family:${serif};font-size:14px;color:#666;line-height:1.5;">
-                    ${digestCompanies.map((dc) => dc.company.company_name).join(", ")}
+                    ${digestCompanies.map((dc) => escapeHtml(dc.company.company_name)).join(", ")}
                   </p>
                   <p style="margin:8px 0 0;font-family:${mono};font-size:11px;letter-spacing:0.6px;color:#777;text-transform:uppercase;">
                     ${changedCount} changed · ${noChangeCount} unchanged · ${failedCount} failed · ${totalSignals} total signals
@@ -661,14 +503,14 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
               <!-- TLDR -->
               <tr>
                 <td style="padding:24px 40px 0;">
-                  <p style="margin:0 0 6px;font-family:${mono};font-size:11px;letter-spacing:1px;color:#999;text-transform:uppercase;">TLDR</p>
-                  <p style="margin:0;font-family:${serif};font-size:15px;line-height:1.65;color:#333;">
+                  <p style="margin:0 0 8px;font-family:${mono};font-size:11px;letter-spacing:1px;color:#999;text-transform:uppercase;">TLDR</p>
+                  <div style="font-family:${serif};font-size:14px;color:#333;">
                     ${tldr}
-                  </p>
+                  </div>
                 </td>
               </tr>
               <tr>
-                <td style="padding:24px 40px 0;">
+                <td style="padding:20px 40px 0;">
                   <div style="border-top:1px solid #e0e0e0;"></div>
                 </td>
               </tr>
@@ -677,13 +519,17 @@ function buildDigestEmail(digestCompanies: DigestCompany[], tldr?: string): stri
               <!-- Company sections -->
               ${companySectionsHtml}
 
+              <!-- Unchanged/failed footer -->
+              ${unchangedFooter}
+
               <!-- Footer -->
               <tr>
-                <td style="padding:40px 40px 48px;">
-                  <div style="border-top:2px solid #1a1a1a;margin-bottom:20px;"></div>
-                  <p style="margin:0;font-family:${serif};font-size:12px;color:#888;text-align:center;">
-                    Daily Delta · A CSV file with structured data is attached.
-                  </p>
+                <td style="padding:32px 40px 40px;">
+                  <div style="border-top:1px solid #e0e0e0;padding-top:16px;">
+                    <p style="margin:0;font-family:${mono};font-size:10px;color:#999;text-align:center;">
+                      Daily Delta &middot; CSV attached
+                    </p>
+                  </div>
                 </td>
               </tr>
 
