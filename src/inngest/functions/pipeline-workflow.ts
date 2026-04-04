@@ -93,13 +93,15 @@ export const processCompanyPipelineRun = inngest.createFunction(
         maybeReuseRecentReport(data.companyRunId),
       );
 
-      if (reused.cacheHit && reused.result) {
-        await step.sendEvent("notify-company-run-completed-from-cache", {
-          name: COMPANY_COMPLETED_EVENT,
-          data: {
-            companyRunId: data.companyRunId,
-          },
-        });
+      if (reused.result) {
+        if (reused.cacheHit) {
+          await step.sendEvent("notify-company-run-completed-from-cache", {
+            name: COMPANY_COMPLETED_EVENT,
+            data: {
+              companyRunId: data.companyRunId,
+            },
+          });
+        }
 
         return reused.result;
       }

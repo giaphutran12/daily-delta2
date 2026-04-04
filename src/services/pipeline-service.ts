@@ -13,7 +13,6 @@ import {
 } from "@/services/company-service";
 import {
   buildAgentsFromDefinitions,
-  type PreparedIntelligenceAgent,
   runIntelligenceAgentsSilent,
 } from "@/services/orchestrator";
 import {
