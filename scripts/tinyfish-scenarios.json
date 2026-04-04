@@ -150,5 +150,45 @@
     "viewport": "desktop",
     "title": "Competitor search returns correct results",
     "instructions": "Open a tracked company's detail page, find the competitor search input, and type a well-known company name like 'Stripe'. Verify results appear, there are no duplicate entries for the same company, and selecting one adds it to the competitor list."
+  },
+  {
+    "id": "mobile-reports-layout",
+    "path": "/reports",
+    "auth": "required",
+    "viewport": "mobile",
+    "title": "Reports page has no horizontal overflow on mobile",
+    "instructions": "In a mobile viewport, load the reports page and verify: (1) the page heading and filter Select are stacked vertically and not overlapping or clipped, (2) the reports table (if any reports exist) has a horizontal scrollbar rather than causing the page to overflow, (3) no content is cut off or requires horizontal swipe on the page body itself. Report any horizontal overflow, clipped buttons, or unusable controls."
+  },
+  {
+    "id": "mobile-settings-members-layout",
+    "path": "/settings",
+    "auth": "required",
+    "viewport": "mobile",
+    "title": "Settings organization tab has no overflow on mobile",
+    "instructions": "In a mobile viewport, load the settings page, navigate to the Organization tab, and verify: (1) the members table scrolls within its container rather than overflowing the page, (2) the invite-member row (email input + role select + invite button) is stacked or wide enough that all three controls are reachable, (3) no content is cut off. Report any layout overflow, clipped controls, or touch-target issues."
+  },
+  {
+    "id": "mobile-company-detail-header",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "mobile",
+    "title": "Company detail header metadata and action buttons fit on mobile",
+    "instructions": "In a mobile viewport, open one tracked company detail page. Verify: (1) the company name heading is fully readable without being clipped, (2) the metadata line (industry, domain, founded year) wraps onto multiple lines rather than overflowing horizontally, (3) the action buttons are fully visible and tappable — they should appear below the title on mobile, not jammed next to it. Report any overlap, clipping, or unreachable buttons."
+  },
+  {
+    "id": "mobile-company-chat-overlay",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "mobile",
+    "title": "Company chat panel does not fill full screen on mobile",
+    "instructions": "In a mobile viewport, open one tracked company detail page, then tap the chat trigger button. Verify: (1) the chat panel opens, (2) the panel does NOT cover the entire screen — some page content should remain visible, (3) the chat input area is reachable. Report the approximate percentage of the screen the open chat panel occupies and whether the close button is accessible."
+  },
+  {
+    "id": "mobile-competitor-suggest-form",
+    "path": "/companies",
+    "auth": "required",
+    "viewport": "mobile",
+    "title": "Competitor suggest-add form is usable on mobile",
+    "instructions": "In a mobile viewport, open one tracked company detail page and navigate to the timeline tab. Search for a competitor by name. If a suggest-add prompt appears, verify the inline form (URL input + Add/Cancel buttons) is fully visible and usable without horizontal overflow. Report any overflow or unusable controls."
   }
 ]

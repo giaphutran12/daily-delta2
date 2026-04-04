@@ -485,7 +485,7 @@ export default function CompaniesPage() {
     options?: { compact?: boolean },
   ) => (
     <div
-      className={`flex min-w-[12rem] flex-col gap-1 ${options?.compact ? "" : ""}`}
+      className={`flex sm:min-w-[12rem] flex-col gap-1 ${options?.compact ? "" : ""}`}
       onClick={(event) => event.stopPropagation()}
     >
       {!options?.compact ? (
@@ -503,7 +503,7 @@ export default function CompaniesPage() {
         }
         disabled={bucketAssigningCompanyId === company.company_id}
       >
-        <SelectTrigger className={`h-8 bg-background text-xs ${options?.compact ? "min-w-[11rem]" : ""}`}>
+        <SelectTrigger className={`h-8 bg-background text-xs ${options?.compact ? "sm:min-w-[11rem]" : ""}`}>
           <SelectValue placeholder="Unassigned" />
         </SelectTrigger>
         <SelectContent>

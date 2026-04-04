@@ -93,7 +93,7 @@ export function CompanyChat({
       <div
         className={`absolute bottom-0 right-0 flex w-[36rem] flex-col rounded-2xl border border-border/50 bg-background/80 shadow-2xl backdrop-blur-xl transition-all duration-300 ease-out max-sm:w-[calc(100vw-2.5rem)] ${
           isOpen
-            ? "scale-100 opacity-100 h-[700px] max-h-[calc(100vh-3rem)]"
+            ? "scale-100 opacity-100 h-[700px] max-h-[calc(100vh-3rem)] max-sm:h-[60vh] max-sm:max-h-[60vh]"
             : "pointer-events-none scale-75 opacity-0 h-0"
         }`}
       >

@@ -373,9 +373,9 @@ export default function ReportsPage() {
   if (loading) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <Skeleton className="h-7 w-24" />
-          <Skeleton className="h-8 w-48" />
+          <Skeleton className="h-8 w-full sm:w-48" />
         </div>
         <Card>
           <div className="space-y-3 p-4">
@@ -404,10 +404,10 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold">Reports</h1>
         <Select value={selectedCompanyId} onValueChange={(v) => v && setSelectedCompanyId(v)}>
-          <SelectTrigger className="w-52">
+          <SelectTrigger className="w-full sm:w-52">
             <SelectValue placeholder="All Companies" />
           </SelectTrigger>
           <SelectContent>
@@ -432,7 +432,8 @@ export default function ReportsPage() {
         </Card>
       ) : (
         <Card>
-          <Table>
+          <div className="overflow-x-auto">
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
@@ -466,7 +467,7 @@ export default function ReportsPage() {
                     role="button"
                     aria-expanded={isSelected}
                   >
-                    <TableCell className="text-xs text-muted-foreground">
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {formatDate(report.generated_at)}
                     </TableCell>
                     <TableCell className="max-w-[200px] truncate font-medium">
@@ -545,7 +546,8 @@ export default function ReportsPage() {
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </div>
         </Card>
       )}
 
