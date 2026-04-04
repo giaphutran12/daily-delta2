@@ -59,7 +59,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 
 const SKELETON_ROWS = ["row-a", "row-b", "row-c"];
