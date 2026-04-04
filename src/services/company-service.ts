@@ -109,9 +109,21 @@ export async function searchCompanyCatalog(
   );
   const ranked = rankCompaniesBySearch(candidates, query);
 
+  // Exclude ghost entries (no domain) and deduplicate by domain
+  const seen = new Map<string, Company>();
+  const deduped: Company[] = [];
+  for (const company of ranked) {
+    if (!company.domain) continue;
+    const key = company.domain.toLowerCase();
+    if (!seen.has(key)) {
+      seen.set(key, company);
+      deduped.push(company);
+    }
+  }
+
   return {
-    companies: ranked.slice(offset, offset + limit),
-    total: query?.trim().length ? ranked.length : count ?? ranked.length,
+    companies: deduped.slice(offset, offset + limit),
+    total: query?.trim().length ? deduped.length : count ?? deduped.length,
   };
 }
 
@@ -168,24 +180,6 @@ export async function trackCompany(
 
   if ((existingCount ?? 0) > 0) {
     return;
-  }
-
-  // Check tracking limit
-  const { data: org } = await supabase
-    .from("organizations")
-    .select("tracking_limit")
-    .eq("organization_id", organizationId)
-    .single();
-
-  const limit = org?.tracking_limit ?? 5;
-
-  const { count } = await supabase
-    .from("organization_tracked_companies")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", organizationId);
-
-  if ((count ?? 0) >= limit) {
-    throw new Error(`Tracking limit reached (${limit}). Untrack a company first.`);
   }
 
   const { error } = await supabase
