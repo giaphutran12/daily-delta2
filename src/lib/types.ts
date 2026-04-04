@@ -196,6 +196,9 @@ export interface SignalFinding {
   url?: string;
   detected_at?: string;
   signal_definition_id?: string;
+  priority_score?: number;
+  priority_tier?: "high" | "medium" | "low";
+  freshness_class?: "fresh" | "aging" | "stale";
 }
 
 // ---------- Signal Definitions ----------
