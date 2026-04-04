@@ -267,9 +267,10 @@ export default function CompanyDetailPage() {
         setCompetitors(result.competitors);
         setSuggestions(result.suggestions as TrackedCompany[]);
       })
-      .catch(() => {
+      .catch((err) => {
         setCompetitors([]);
         setSuggestions([]);
+        toast.error(err instanceof Error ? err.message : "Failed to load competitors");
       })
       .finally(() => {
         competitorSearchReadyRef.current = true;
@@ -333,8 +334,8 @@ export default function CompanyDetailPage() {
     try {
       await untrackCompany(company.company_id);
       router.push("/companies");
-    } catch {
-      console.error("[COMPANY] Failed to untrack");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to untrack company");
     }
   };
 
@@ -360,8 +361,12 @@ export default function CompanyDetailPage() {
   };
 
   const handleDeleteSignal = async (id: string) => {
-    await deleteSignalDefinition(id);
-    setSignalDefs((prev) => prev.filter((s) => s.id !== id));
+    try {
+      await deleteSignalDefinition(id);
+      setSignalDefs((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete signal");
+    }
   };
 
   const timeline = groupTimelineSignals(timelineSignals);
@@ -396,12 +401,16 @@ export default function CompanyDetailPage() {
   };
 
   const handleRemoveCompetitor = async (competitorCompanyId: string) => {
-    await removeCompetitor(companyId, competitorCompanyId);
-    const next = await getCompetitors(companyId);
-    setCompetitors(next.competitors);
-    setSuggestions(next.suggestions as TrackedCompany[]);
-    if (next.competitors.length === 0) {
-      setCompareMode(false);
+    try {
+      await removeCompetitor(companyId, competitorCompanyId);
+      const next = await getCompetitors(companyId);
+      setCompetitors(next.competitors);
+      setSuggestions(next.suggestions as TrackedCompany[]);
+      if (next.competitors.length === 0) {
+        setCompareMode(false);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove competitor");
     }
   };
 
@@ -409,7 +418,7 @@ export default function CompanyDetailPage() {
     (company) => ({
       id: company.company_id,
       label: company.company_name,
-      subtitle: `${company.domain}${company.industry ? ` · ${company.industry}` : ""}`,
+      subtitle: `${company.domain || company.website_url || "(unknown domain)"}${company.industry ? ` · ${company.industry}` : ""}`,
       value: company,
     }),
   );

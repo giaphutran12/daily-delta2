@@ -86,8 +86,9 @@ export default function CompaniesPage() {
     try {
       const { companies: data } = await getCompanies();
       setCompanies(data);
-    } catch {
+    } catch (err) {
       setCompanies([]);
+      toast.error(err instanceof Error ? err.message : "Failed to load companies");
     }
   }, []);
 
@@ -124,9 +125,10 @@ export default function CompaniesPage() {
           setCatalogResults(results);
           setCatalogTotal(total);
         })
-        .catch(() => {
+        .catch((err) => {
           setCatalogResults([]);
           setCatalogTotal(0);
+          toast.error(err instanceof Error ? err.message : "Search failed");
         })
         .finally(() => setCatalogLoading(false));
     }, 300);
@@ -633,9 +635,13 @@ export default function CompaniesPage() {
         </div>
       ) : filteredCompanies.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-2 rounded-xl border bg-muted/30 py-16 text-center">
-          <p className="text-sm font-medium">No companies tracked</p>
+          <p className="text-sm font-medium">
+            {searchQuery.trim() ? `No results for "${searchQuery.trim()}"` : "No companies tracked"}
+          </p>
           <p className="text-xs text-muted-foreground">
-            Click &ldquo;Add Company&rdquo; to search our catalog or add by URL.
+            {searchQuery.trim()
+              ? "Try a different search term."
+              : 'Click "Add Company" to search our catalog or add by URL.'}
           </p>
         </div>
       ) : (
