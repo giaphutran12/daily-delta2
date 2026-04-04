@@ -97,6 +97,9 @@ export interface ReportData {
   sections: ReportSection[];
   ai_summary?: string;
   ai_summary_type?: 'summary' | 'business_intelligence';
+  cache_context?: {
+    signal_definition_fingerprint?: string;
+  };
 }
 
 export interface ReportSignal {

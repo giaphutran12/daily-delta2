@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createHash } from "node:crypto";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateText } from "ai";
 import type {
@@ -363,6 +364,9 @@ export async function processCompany(
 
       if (digestFindings.length > 0) {
         const reportData = generateReportFromFindings(company, digestFindings, definitions);
+        reportData.cache_context = {
+          signal_definition_fingerprint: buildSignalDefinitionFingerprint(definitions),
+        };
         const report = await storeReport(company.company_id, reportData, trigger);
         console.log("%s Report stored (%d sections, %d digest signals)", tag, reportData.sections.length, digestFindings.length);
 
@@ -488,6 +492,32 @@ function toReportTrigger(source: "cron" | "manual" | "refresh"): "manual" | "cro
 function getPipelineCacheTtlHours(): number {
   const parsed = Number(process.env.PIPELINE_CACHE_TTL_HOURS ?? "6");
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 6;
+}
+
+function buildSignalDefinitionFingerprint(
+  definitions: SignalDefinition[],
+): string {
+  const normalized = [...definitions]
+    .map((definition) => ({
+      id: definition.id,
+      company_id: definition.company_id ?? null,
+      is_default: definition.is_default,
+      name: definition.name,
+      signal_type: definition.signal_type,
+      display_name: definition.display_name,
+      target_url: definition.target_url,
+      search_instructions: definition.search_instructions,
+      scope: definition.scope,
+      enabled: definition.enabled,
+      sort_order: definition.sort_order,
+      created_at: definition.created_at ?? "",
+      updated_at: definition.updated_at ?? "",
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+
+  return createHash("sha256")
+    .update(JSON.stringify(normalized))
+    .digest("hex");
 }
 
 function readAgentErrorMessage(error: unknown): string {
@@ -692,11 +722,20 @@ export async function maybeReuseRecentReport(
     };
   }
 
+  const definitions = await getSignalDefinitions(companyRun.company_id);
+  const currentFingerprint = buildSignalDefinitionFingerprint(definitions);
+
   const recent = await getRecentReportForCompany(
     companyRun.company_id,
     getPipelineCacheTtlHours(),
   );
   if (!recent) {
+    return { cacheHit: false };
+  }
+
+  const cachedFingerprint =
+    recent.report.report_data.cache_context?.signal_definition_fingerprint;
+  if (cachedFingerprint !== currentFingerprint) {
     return { cacheHit: false };
   }
 
@@ -772,6 +811,9 @@ async function persistCompanyFindings(
 
     if (digestFindings.length > 0) {
       const reportData = generateReportFromFindings(company, digestFindings, definitions);
+      reportData.cache_context = {
+        signal_definition_fingerprint: buildSignalDefinitionFingerprint(definitions),
+      };
       const report = await storeReport(company.company_id, reportData, trigger);
       console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
 
