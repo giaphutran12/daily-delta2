@@ -1,4 +1,23 @@
 #!/usr/bin/env node
+/**
+ * TinyFish QA Runner — automated browser-agent testing for Daily Delta
+ *
+ * Setup:
+ *   1. Expose local dev server via tinyfi.sh (free ngrok alternative):
+ *      npx tinyfi.sh http 3000
+ *   2. Set environment variables:
+ *      TINYFISH_API_KEY=<your key>
+ *      TINYFISH_QA_BASE_URL=<tinyfi.sh URL>
+ *      TINYFISH_QA_EMAIL=pentalaacenha@gmail.com
+ *      TINYFISH_QA_PASSWORD=Iwillchangethis@123
+ *   3. Optional: set TINYFISH_QA_BASELINE to a previous report path
+ *      to get regression diffs (new failures, fixes, etc.)
+ *
+ * Usage:
+ *   node scripts/run-tinyfish-qa.mjs
+ *   TINYFISH_QA_SCENARIOS=login-desktop,pipeline-trigger-ui node scripts/run-tinyfish-qa.mjs
+ *   TINYFISH_QA_BASELINE=.sisyphus/evidence/tinyfish-qa-report.json node scripts/run-tinyfish-qa.mjs
+ */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -184,6 +203,46 @@ async function mapWithConcurrency(items, limit, worker) {
   return results;
 }
 
+async function buildRegressionDiff(baselinePath, currentResults) {
+  let baseline;
+  try {
+    baseline = JSON.parse(await readFile(path.resolve(baselinePath), "utf8"));
+  } catch {
+    console.log(`[regression] Baseline not found at ${baselinePath}, skipping diff`);
+    return null;
+  }
+
+  const baselineByScenario = new Map(
+    (baseline.results ?? []).map((r) => [r.scenario_id, r]),
+  );
+  const currentByScenario = new Map(
+    currentResults.map((r) => [r.scenario_id, r]),
+  );
+
+  const diff = { regressed: [], fixed: [], changed: [], new_scenarios: [], removed: [] };
+
+  for (const [id, curr] of currentByScenario) {
+    const prev = baselineByScenario.get(id);
+    if (!prev) {
+      diff.new_scenarios.push({ scenario_id: id, status: curr.status });
+    } else if (prev.status === "pass" && curr.status === "fail") {
+      diff.regressed.push({ scenario_id: id, prev: prev.status, curr: curr.status });
+    } else if (prev.status === "fail" && curr.status === "pass") {
+      diff.fixed.push({ scenario_id: id, prev: prev.status, curr: curr.status });
+    } else if (prev.status !== curr.status) {
+      diff.changed.push({ scenario_id: id, prev: prev.status, curr: curr.status });
+    }
+  }
+
+  for (const [id] of baselineByScenario) {
+    if (!currentByScenario.has(id)) {
+      diff.removed.push({ scenario_id: id });
+    }
+  }
+
+  return diff;
+}
+
 async function main() {
   const apiKey = getRequiredEnv("TINYFISH_API_KEY");
   const baseUrl = normalizeBaseUrl(getRequiredEnv("TINYFISH_QA_BASE_URL"));
@@ -192,6 +251,7 @@ async function main() {
   const scenarioFile = process.argv[2] ?? DEFAULT_SCENARIO_FILE;
   const outputFile = process.env.TINYFISH_QA_OUTPUT ?? DEFAULT_OUTPUT_FILE;
   const concurrency = Number(process.env.TINYFISH_QA_CONCURRENCY ?? "10");
+  const baselinePath = process.env.TINYFISH_QA_BASELINE ?? "";
   const selectedScenarioIds = new Set(
     (process.env.TINYFISH_QA_SCENARIOS ?? "")
       .split(",")
@@ -229,12 +289,17 @@ async function main() {
     { pass: 0, fail: 0, blocked: 0, issues: 0 },
   );
 
+  const regression = baselinePath
+    ? await buildRegressionDiff(baselinePath, results)
+    : null;
+
   const report = {
     generated_at: new Date().toISOString(),
     base_url: baseUrl,
     scenario_count: results.length,
     summary,
     results,
+    ...(regression ? { regression } : {}),
   };
 
   const outputPath = path.resolve(outputFile);
@@ -243,6 +308,26 @@ async function main() {
 
   console.log(`TinyFish QA report written to ${outputPath}`);
   console.log(JSON.stringify(summary));
+
+  if (regression) {
+    console.log("\n--- Regression Diff ---");
+    if (regression.regressed.length > 0) {
+      console.log(`  ✗ Regressed: ${regression.regressed.map((r) => r.scenario_id).join(", ")}`);
+    }
+    if (regression.fixed.length > 0) {
+      console.log(`  ✓ Fixed: ${regression.fixed.map((r) => r.scenario_id).join(", ")}`);
+    }
+    if (regression.new_scenarios.length > 0) {
+      console.log(`  + New: ${regression.new_scenarios.map((r) => r.scenario_id).join(", ")}`);
+    }
+    if (regression.removed.length > 0) {
+      console.log(`  - Removed: ${regression.removed.map((r) => r.scenario_id).join(", ")}`);
+    }
+    if (regression.regressed.length === 0 && regression.fixed.length === 0 &&
+        regression.new_scenarios.length === 0 && regression.removed.length === 0) {
+      console.log("  No changes from baseline.");
+    }
+  }
 }
 
 main().catch((error) => {
