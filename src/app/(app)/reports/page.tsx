@@ -433,7 +433,7 @@ export default function ReportsPage() {
       ) : (
         <Card>
           <div className="overflow-x-auto">
-          <Table>
+            <Table>
             <TableHeader>
               <TableRow>
                 <TableHead>Date</TableHead>
@@ -546,7 +546,7 @@ export default function ReportsPage() {
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
           </div>
         </Card>
       )}
