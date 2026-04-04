@@ -39,7 +39,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
@@ -113,38 +112,6 @@ function slugify(text: string): string {
     .replace(/^_|_$/g, "");
 }
 
-function groupSignalsByDay(signals: Signal[]) {
-  const groupedByDay = new Map<string, Signal[]>();
-  for (const signal of signals) {
-    const day = signal.detected_at
-      ? new Date(signal.detected_at).toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        })
-      : "Date Unknown";
-    if (!groupedByDay.has(day)) groupedByDay.set(day, []);
-    groupedByDay.get(day)!.push(signal);
-  }
-
-  // Sort days newest first, "Date Unknown" goes to the bottom
-  const sortedDays = [...groupedByDay.entries()].sort((a, b) => {
-    if (a[0] === "Date Unknown") return 1;
-    if (b[0] === "Date Unknown") return -1;
-    return new Date(b[0]).getTime() - new Date(a[0]).getTime();
-  });
-
-  // Within each day, group by signal_type
-  return sortedDays.map(([day, daySignals]) => {
-    const byType = new Map<string, Signal[]>();
-    for (const s of daySignals) {
-      if (!byType.has(s.signal_type)) byType.set(s.signal_type, []);
-      byType.get(s.signal_type)!.push(s);
-    }
-    return { day, groups: [...byType.entries()] };
-  });
-}
-
 function getIndustryColor(industry: string | null | undefined): string {
   const palette = [
     "bg-blue-100 text-blue-800 border-blue-200",
@@ -216,6 +183,9 @@ export default function CompanyDetailPage() {
   const [comparisonSignals, setComparisonSignals] = useState<Signal[]>([]);
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
+  const [visibleCompetitorIds, setVisibleCompetitorIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [competitors, setCompetitors] = useState<CompetitorLink[]>([]);
   const [suggestions, setSuggestions] = useState<TrackedCompany[]>([]);
   const [competitorsLoading, setCompetitorsLoading] = useState(true);
@@ -231,6 +201,7 @@ export default function CompanyDetailPage() {
   const [addingNewCompetitor, setAddingNewCompetitor] = useState(false);
   const competitorSearchDebounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const competitorSearchReadyRef = useRef(false);
+  const previousCompetitorIdsRef = useRef<Set<string>>(new Set());
 
   // Signal definitions state
   const [signalDefs, setSignalDefs] = useState<SignalDefinition[]>([]);
@@ -283,6 +254,30 @@ export default function CompanyDetailPage() {
         setCompetitorsLoading(false);
       });
   }, [currentOrg, companyId]);
+
+  useEffect(() => {
+    const competitorIds = competitors.map((entry) => entry.competitor_company_id);
+
+    setVisibleCompetitorIds((prev) => {
+      if (competitorIds.length === 0) return new Set();
+
+      const previousIds = previousCompetitorIdsRef.current;
+      if (previousIds.size === 0 && prev.size === 0) {
+        return new Set(competitorIds);
+      }
+
+      const next = new Set<string>();
+      for (const competitorId of competitorIds) {
+        if (!previousIds.has(competitorId) || prev.has(competitorId)) {
+          next.add(competitorId);
+        }
+      }
+
+      return next;
+    });
+
+    previousCompetitorIdsRef.current = new Set(competitorIds);
+  }, [competitors]);
 
   useEffect(() => {
     if (!currentOrg || !companyId || !competitorSearchReadyRef.current) return;
@@ -376,7 +371,36 @@ export default function CompanyDetailPage() {
   };
 
   const timeline = groupTimelineSignals(timelineSignals);
-  const comparisonTimeline = groupTimelineSignals(comparisonSignals);
+  const visibleCompetitors = competitors.filter((entry) =>
+    visibleCompetitorIds.has(entry.competitor_company_id),
+  );
+  const visibleComparisonSignals = comparisonSignals.filter(
+    (signal) =>
+      signal.company_id === companyId || visibleCompetitorIds.has(signal.company_id),
+  );
+  const comparisonTimeline = groupTimelineSignals(visibleComparisonSignals);
+
+  const toggleCompetitorVisibility = (competitorCompanyId: string) => {
+    setVisibleCompetitorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(competitorCompanyId)) {
+        next.delete(competitorCompanyId);
+      } else {
+        next.add(competitorCompanyId);
+      }
+      return next;
+    });
+  };
+
+  const showAllCompetitors = () => {
+    setVisibleCompetitorIds(
+      new Set(competitors.map((entry) => entry.competitor_company_id)),
+    );
+  };
+
+  const hideAllCompetitors = () => {
+    setVisibleCompetitorIds(new Set());
+  };
 
   const handleAddCompetitor = async (
     payload:
@@ -634,6 +658,22 @@ export default function CompanyDetailPage() {
                   <span>{entry.competitor.company_name}</span>
                   <button
                     type="button"
+                    aria-pressed={visibleCompetitorIds.has(entry.competitor_company_id)}
+                    onClick={() =>
+                      toggleCompetitorVisibility(entry.competitor_company_id)
+                    }
+                    className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium transition ${
+                      visibleCompetitorIds.has(entry.competitor_company_id)
+                        ? "bg-background/80 text-foreground hover:bg-background"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                    }`}
+                  >
+                    {visibleCompetitorIds.has(entry.competitor_company_id)
+                      ? "Shown"
+                      : "Hidden"}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void handleRemoveCompetitor(entry.competitor_company_id)}
                     className="rounded-full opacity-70 transition hover:opacity-100"
                   >
@@ -642,6 +682,27 @@ export default function CompanyDetailPage() {
                 </div>
               ))}
             </div>
+
+            {competitors.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={visibleCompetitorIds.size === competitors.length}
+                  onClick={showAllCompetitors}
+                >
+                  Show all
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={visibleCompetitorIds.size === 0}
+                  onClick={hideAllCompetitors}
+                >
+                  Hide all
+                </Button>
+              </div>
+            )}
 
             <div className="mt-4">
               <EntitySearchCombobox
@@ -727,6 +788,13 @@ export default function CompanyDetailPage() {
               <p className="text-sm font-medium">No competitors yet</p>
               <p className="text-xs text-muted-foreground">
                 Add a competitor above to compare what they are doing against {company!.company_name}.
+              </p>
+            </div>
+          ) : compareMode && competitors.length > 0 && visibleCompetitors.length === 0 ? (
+            <div className="flex flex-col items-center justify-center gap-2 rounded-xl border bg-muted/30 py-16 text-center">
+              <p className="text-sm font-medium">All competitors hidden</p>
+              <p className="text-xs text-muted-foreground">
+                Show one or more competitors above to compare them against {company!.company_name}.
               </p>
             </div>
           ) : (compareMode ? comparisonTimeline : timeline).length === 0 ? (
