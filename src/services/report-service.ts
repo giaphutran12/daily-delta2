@@ -158,6 +158,42 @@ export async function storeReport(
   return rowToReport(data);
 }
 
+export function countReportSignals(reportData: ReportData): number {
+  return reportData.sections.reduce(
+    (total, section) => total + section.items.length,
+    0,
+  );
+}
+
+export async function getRecentReportForCompany(
+  companyId: string,
+  maxAgeHours: number,
+): Promise<{ report: Report; signalCount: number } | null> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("reports")
+    .select("*")
+    .eq("company_id", companyId)
+    .order("generated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const report = rowToReport(data);
+  const ageMs = Date.now() - new Date(report.generated_at).getTime();
+  const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
+
+  if (!Number.isFinite(ageMs) || ageMs > maxAgeMs) {
+    return null;
+  }
+
+  return {
+    report,
+    signalCount: countReportSignals(report.report_data),
+  };
+}
+
 /**
  * Get a single report by ID
  */

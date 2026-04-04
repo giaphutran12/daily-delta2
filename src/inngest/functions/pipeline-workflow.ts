@@ -21,6 +21,7 @@ import {
 import {
   failCompanyRun,
   finalizeCompanyAgents,
+  maybeReuseRecentReport,
   pollCompanyAgents,
   submitCompanyAgents,
 } from "@/services/pipeline-service";
@@ -88,6 +89,23 @@ export const processCompanyPipelineRun = inngest.createFunction(
   async ({ event, step }) => {
     const data = event.data as CompanyRequestedEventData;
     try {
+      const reused = await step.run("maybe-reuse-recent-report", () =>
+        maybeReuseRecentReport(data.companyRunId),
+      );
+
+      if (reused.result) {
+        if (reused.cacheHit) {
+          await step.sendEvent("notify-company-run-completed-from-cache", {
+            name: COMPANY_COMPLETED_EVENT,
+            data: {
+              companyRunId: data.companyRunId,
+            },
+          });
+        }
+
+        return reused.result;
+      }
+
       await step.run("submit-company-agents", () =>
         submitCompanyAgents(data.companyRunId),
       );
