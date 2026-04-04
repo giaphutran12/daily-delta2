@@ -36,6 +36,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -188,7 +189,7 @@ function ReportDetailCard({
                 No signals found in this report.
               </p>
             ) : (
-              <Accordion>
+              <Accordion defaultValue={rd.sections.map((section, idx) => `${section.signal_type}-${section.display_name}-${idx}`)}>
                 {rd.sections.map((section, idx) => (
                   <AccordionItem
                     key={`${section.signal_type}-${section.display_name}-${idx}`}
@@ -277,6 +278,7 @@ export default function ReportsPage() {
   const [emailErrorMsg, setEmailErrorMsg] = useState<string>("");
   const [previewErrorId, setPreviewErrorId] = useState<string | null>(null);
   const [deleteDialogId, setDeleteDialogId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([getReports(), getCompanies()])
@@ -290,7 +292,11 @@ export default function ReportsPage() {
         );
         setCompanies(c.companies);
       })
-      .catch(() => {})
+      .catch((err) => {
+        const msg = err instanceof Error ? err.message : "Failed to load reports";
+        setLoadError(msg);
+        toast.error(msg);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -313,7 +319,8 @@ export default function ReportsPage() {
       await deleteReport(reportId);
       setReports((prev) => prev.filter((r) => r.report_id !== reportId));
       if (selectedReportId === reportId) setSelectedReportId(null);
-    } catch {
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete report");
     } finally {
       setDeletingId(null);
       setDeleteDialogId(null);
@@ -376,6 +383,20 @@ export default function ReportsPage() {
               <Skeleton key={n} className="h-12 w-full" />
             ))}
           </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-xl font-semibold">Reports</h1>
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-base font-medium text-destructive">Failed to load reports</p>
+            <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
+          </CardContent>
         </Card>
       </div>
     );

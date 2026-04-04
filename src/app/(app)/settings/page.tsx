@@ -12,6 +12,7 @@ import {
   createOrganization,
   type EmailFrequency,
 } from "@/lib/api/client";
+import { toast } from "sonner";
 import type { OrganizationMember } from "@/lib/types";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -113,7 +114,9 @@ export default function SettingsPage() {
         else if (user?.email) setDeliveryEmail(user.email);
         setFrequencyState(s.email_frequency ?? "daily");
       })
-      .catch(() => {});
+      .catch((err) => {
+        toast.error(err instanceof Error ? err.message : "Failed to load settings");
+      });
   }, [user?.email]);
 
   const handleSaveEmail = async () => {
@@ -141,8 +144,9 @@ export default function SettingsPage() {
       await setEmailFrequency(freq);
       const settings = await getUserSettings();
       setFrequencyState(settings.email_frequency ?? freq);
-    } catch {
+    } catch (err) {
       setFrequencyState(previous);
+      toast.error(err instanceof Error ? err.message : "Failed to update frequency");
     }
   };
 
@@ -190,7 +194,8 @@ export default function SettingsPage() {
     try {
       await removeMember(currentOrg.organization_id, userId);
       setMembers((prev) => prev.filter((m) => m.user_id !== userId));
-    } catch {
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to remove member");
     } finally {
       setRemoveMemberId(null);
     }
