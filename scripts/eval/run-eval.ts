@@ -3,12 +3,20 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  classifyFreshness,
-  scoreSignal,
-  type FreshnessClass,
-} from "../../src/services/signal-scoring.ts";
-import type { Signal } from "../../src/lib/types.ts";
+
+type FreshnessClass = "fresh" | "aging" | "stale";
+
+interface EvalSignal {
+  signal_id: string;
+  company_id: string;
+  signal_type: string;
+  source: string;
+  title: string;
+  content: string;
+  url: string | null;
+  detected_at: string | null;
+  created_at: string;
+}
 
 type ExpectedTier = "high" | "medium" | "low";
 
@@ -36,7 +44,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATASET_PATH = path.join(__dirname, "signal-eval-set.json");
 
-function toSignal(entry: EvalEntry): Signal {
+function toSignal(entry: EvalEntry): EvalSignal {
   return {
     signal_id: "",
     company_id: "",
@@ -86,6 +94,17 @@ function printResults(results: EvalResult[]): void {
 }
 
 async function main(): Promise<void> {
+  const scoringModule = await import(
+    new URL("../../src/services/signal-scoring.ts", import.meta.url).href
+  );
+  const {
+    scoreSignal,
+    classifyFreshness,
+  }: {
+    scoreSignal: (signal: EvalSignal) => { score: number; tier: ExpectedTier };
+    classifyFreshness: (detectedAt?: string, createdAt?: string) => FreshnessClass;
+  } = scoringModule;
+
   const raw = await readFile(DATASET_PATH, "utf8");
   const entries = JSON.parse(raw) as EvalEntry[];
 
