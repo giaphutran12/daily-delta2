@@ -81,6 +81,7 @@ export default function CompaniesPage() {
   const [bucketSavingId, setBucketSavingId] = useState<string | null>(null);
   const [bucketDeletingId, setBucketDeletingId] = useState<string | null>(null);
   const [bucketAssigningCompanyId, setBucketAssigningCompanyId] = useState<string | null>(null);
+  const [groupSearchQueries, setGroupSearchQueries] = useState<Record<string, string>>({});
 
   // Add company dialog state
   const [addOpen, setAddOpen] = useState(false);
@@ -504,7 +505,9 @@ export default function CompaniesPage() {
         disabled={bucketAssigningCompanyId === company.company_id}
       >
         <SelectTrigger className={`h-8 bg-background text-xs ${options?.compact ? "sm:min-w-[11rem]" : ""}`}>
-          <SelectValue placeholder="Unassigned" />
+          <span className="truncate">
+            {company.bucket?.name ?? "Unassigned"}
+          </span>
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="unassigned">Unassigned</SelectItem>
@@ -936,25 +939,47 @@ export default function CompaniesPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-6">
-          {bucketGroups.map((group) => (
+          {bucketGroups.map((group) => {
+            const groupQuery = groupSearchQueries[group.key] ?? "";
+            const groupCompanies = groupQuery.trim()
+              ? group.companies.filter((c) => companyMatchesSearchQuery(c, groupQuery))
+              : group.companies;
+
+            return (
             <section key={group.key} className="flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-sm font-semibold">{group.title}</h2>
                   <p className="text-xs text-muted-foreground">
                     {group.companies.length} compan{group.companies.length === 1 ? "y" : "ies"}
+                    {groupQuery.trim() && groupCompanies.length !== group.companies.length
+                      ? ` · ${groupCompanies.length} shown`
+                      : ""}
                   </p>
                 </div>
+                {group.companies.length > 5 && (
+                  <Input
+                    placeholder={`Search in ${group.title}...`}
+                    value={groupQuery}
+                    onChange={(e) =>
+                      setGroupSearchQueries((prev) => ({
+                        ...prev,
+                        [group.key]: e.target.value,
+                      }))
+                    }
+                    className="h-8 w-full text-xs sm:w-48"
+                  />
+                )}
               </div>
 
-              {group.companies.length === 0 ? (
+              {groupCompanies.length === 0 ? (
                 <div className="rounded-xl border border-dashed bg-muted/10 px-4 py-6 text-sm text-muted-foreground">
-                  No companies in this bucket yet.
+                  {groupQuery.trim() ? "No matching companies." : "No companies in this bucket yet."}
                 </div>
               ) : (
                 <>
                   <div className="grid gap-3 md:hidden">
-                    {group.companies.map((company) => (
+                    {groupCompanies.map((company) => (
                       <div
                         key={company.company_id}
                         className="rounded-xl border bg-card p-4 shadow-sm"
@@ -1039,7 +1064,7 @@ export default function CompaniesPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {group.companies.map((company) => (
+                        {groupCompanies.map((company) => (
                           <TableRow
                             key={company.company_id}
                             className="cursor-pointer"
@@ -1096,7 +1121,8 @@ export default function CompaniesPage() {
                 </>
               )}
             </section>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
