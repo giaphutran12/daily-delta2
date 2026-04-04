@@ -39,7 +39,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
@@ -111,38 +110,6 @@ function slugify(text: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_|_$/g, "");
-}
-
-function groupSignalsByDay(signals: Signal[]) {
-  const groupedByDay = new Map<string, Signal[]>();
-  for (const signal of signals) {
-    const day = signal.detected_at
-      ? new Date(signal.detected_at).toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        })
-      : "Date Unknown";
-    if (!groupedByDay.has(day)) groupedByDay.set(day, []);
-    groupedByDay.get(day)!.push(signal);
-  }
-
-  // Sort days newest first, "Date Unknown" goes to the bottom
-  const sortedDays = [...groupedByDay.entries()].sort((a, b) => {
-    if (a[0] === "Date Unknown") return 1;
-    if (b[0] === "Date Unknown") return -1;
-    return new Date(b[0]).getTime() - new Date(a[0]).getTime();
-  });
-
-  // Within each day, group by signal_type
-  return sortedDays.map(([day, daySignals]) => {
-    const byType = new Map<string, Signal[]>();
-    for (const s of daySignals) {
-      if (!byType.has(s.signal_type)) byType.set(s.signal_type, []);
-      byType.get(s.signal_type)!.push(s);
-    }
-    return { day, groups: [...byType.entries()] };
-  });
 }
 
 function getIndustryColor(industry: string | null | undefined): string {
