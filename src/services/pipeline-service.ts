@@ -22,10 +22,15 @@ import {
 } from "@/services/report-service";
 import { getSignalDefinitions } from "@/services/signal-definition-service";
 import { getTinyfishRun, queueTinyfishAgent } from "@/services/tinyfish-client";
+import { scoreSignalFinding, classifyFreshness } from "@/services/signal-scoring";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+function normalizeTitle(title: string): string {
+  return title.toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ").trim();
+}
 
 function sanitizeTimestamp(value: string | undefined): string | null {
   if (!value) return null;
@@ -54,6 +59,7 @@ async function deduplicateFindings(
   const supabase = createAdminClient();
   const newFindings: SignalFinding[] = [];
   const batchTitles = new Set<string>();
+  const batchNormalized = new Set<string>();
 
   for (const finding of findings) {
     const titleLower = (finding.title ?? "").trim().toLowerCase();
@@ -89,6 +95,16 @@ async function deduplicateFindings(
       continue;
     }
 
+    // Layer 1c: Normalized title match within batch (strip punctuation, collapse whitespace)
+    const normalized = normalizeTitle(finding.title ?? "");
+    if (normalized.length > 0 && batchNormalized.has(normalized)) {
+      console.log(
+        "[DEDUP] DUPLICATE — title: \"%s\" | reason: normalized title match in batch",
+        finding.title,
+      );
+      continue;
+    }
+
     // Layer 2: Deep URL match
     if (finding.url) {
       let pathDepth = 0;
@@ -119,6 +135,7 @@ async function deduplicateFindings(
     );
     newFindings.push(finding);
     batchTitles.add(titleLower);
+    if (normalized.length > 0) batchNormalized.add(normalized);
   }
 
   return newFindings;
@@ -155,7 +172,7 @@ async function llmDedup(
       .eq("company_id", companyId)
       .eq("signal_type", signalType)
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(50);
     existingByType.set(signalType, data ?? []);
   }
 
@@ -282,6 +299,8 @@ async function storeSignals(
     content: finding.summary,
     url: finding.url || null,
     detected_at: sanitizeTimestamp(finding.detected_at),
+    priority_score: finding.priority_score ?? null,
+    priority_tier: finding.priority_tier ?? null,
   }));
 
   const { error } = await supabase.from("signals").insert(rows);
@@ -323,26 +342,53 @@ export async function processCompany(
     const finalFindings = await llmDedup(company.company_id, newFindings);
     console.log("%s After LLM dedup: %d signals (filtered %d more)", tag, finalFindings.length, newFindings.length - finalFindings.length);
 
-    // 5. Store final findings in DB
+    // 5. Score and classify each finding (#23, #19)
+    for (const f of finalFindings) {
+      const { score, tier } = scoreSignalFinding(f);
+      f.priority_score = score;
+      f.priority_tier = tier;
+      f.freshness_class = classifyFreshness(f.detected_at);
+    }
+
+    // 6. Store & report
     if (finalFindings.length > 0) {
+      // Store ALL signals for history (#22)
       await storeSignals(company.company_id, finalFindings);
       console.log("%s Stored %d signals", tag, finalFindings.length);
 
-      // 6. Generate & store report
-      const reportData = generateReportFromFindings(company, finalFindings, definitions);
-      const report = await storeReport(company.company_id, reportData, trigger);
-      console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
+      // Only digest-worthy signals enter the report (#22, #20)
+      const digestFindings = finalFindings.filter(
+        (f) => f.priority_tier !== "low" && f.freshness_class !== "stale",
+      );
 
+      if (digestFindings.length > 0) {
+        const reportData = generateReportFromFindings(company, digestFindings, definitions);
+        const report = await storeReport(company.company_id, reportData, trigger);
+        console.log("%s Report stored (%d sections, %d digest signals)", tag, reportData.sections.length, digestFindings.length);
+
+        await updateLastAgentRun(company.company_id);
+
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log("%s Done in %ss — %d new signals (%d digest-worthy)", tag, elapsed, finalFindings.length, digestFindings.length);
+
+        return {
+          companyId: company.company_id,
+          companyName: company.company_name,
+          signalCount: finalFindings.length,
+          reportId: report.report_id,
+          findings: finalFindings,
+        };
+      }
+
+      // Signals stored but none digest-worthy
       await updateLastAgentRun(company.company_id);
-
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log("%s Done in %ss — %d new signals", tag, elapsed, finalFindings.length);
+      console.log("%s Done in %ss — %d signals stored (none digest-worthy)", tag, elapsed, finalFindings.length);
 
       return {
         companyId: company.company_id,
         companyName: company.company_name,
         signalCount: finalFindings.length,
-        reportId: report.report_id,
         findings: finalFindings,
       };
     }
@@ -638,22 +684,48 @@ async function persistCompanyFindings(
     newFindings.length - finalFindings.length,
   );
 
+  // Score and classify each finding (#23, #19)
+  for (const f of finalFindings) {
+    const { score, tier } = scoreSignalFinding(f);
+    f.priority_score = score;
+    f.priority_tier = tier;
+    f.freshness_class = classifyFreshness(f.detected_at);
+  }
+
   if (finalFindings.length > 0) {
+    // Store ALL signals for history (#22)
     await storeSignals(company.company_id, finalFindings);
     console.log("%s Stored %d signals", tag, finalFindings.length);
 
-    const reportData = generateReportFromFindings(company, finalFindings, definitions);
-    const report = await storeReport(company.company_id, reportData, trigger);
-    console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
+    // Only digest-worthy signals enter the report (#22, #20)
+    const digestFindings = finalFindings.filter(
+      (f) => f.priority_tier !== "low" && f.freshness_class !== "stale",
+    );
+    console.log("%s Digest-worthy: %d (filtered %d low/stale)", tag, digestFindings.length, finalFindings.length - digestFindings.length);
 
+    if (digestFindings.length > 0) {
+      const reportData = generateReportFromFindings(company, digestFindings, definitions);
+      const report = await storeReport(company.company_id, reportData, trigger);
+      console.log("%s Report stored (%d sections)", tag, reportData.sections.length);
+
+      await updateLastAgentRun(company.company_id);
+
+      return {
+        companyId: company.company_id,
+        companyName: company.company_name,
+        signalCount: digestFindings.length,
+        reportId: report.report_id,
+        findings: digestFindings,
+      };
+    }
+
+    // Signals stored but none were digest-worthy
     await updateLastAgentRun(company.company_id);
-
     return {
       companyId: company.company_id,
       companyName: company.company_name,
-      signalCount: finalFindings.length,
-      reportId: report.report_id,
-      findings: finalFindings,
+      signalCount: 0,
+      findings: [],
     };
   }
 

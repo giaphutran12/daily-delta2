@@ -1,4 +1,4 @@
-import type { Signal } from "@/lib/types";
+import type { Signal, SignalFinding } from "@/lib/types";
 
 const SIGNAL_TYPE_WEIGHTS: Record<string, number> = {
   financing: 30,
@@ -92,4 +92,47 @@ export function enrichSignalsWithPriority<T extends Signal>(signals: T[]): T[] {
       priority_tier: tier,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Freshness classification (#19)
+// ---------------------------------------------------------------------------
+
+export type FreshnessClass = "fresh" | "aging" | "stale";
+
+export function classifyFreshness(
+  detectedAt?: string,
+  createdAt?: string,
+): FreshnessClass {
+  const ref = detectedAt ?? createdAt;
+  if (!ref) return "aging";
+
+  const ageMs = Date.now() - new Date(ref).getTime();
+  const ageDays = ageMs / (1000 * 60 * 60 * 24);
+
+  if (ageDays <= 7) return "fresh";
+  if (ageDays <= 30) return "aging";
+  return "stale";
+}
+
+// ---------------------------------------------------------------------------
+// Score a SignalFinding (pre-DB type) by adapting to Signal shape (#23)
+// ---------------------------------------------------------------------------
+
+export function scoreSignalFinding(finding: SignalFinding): {
+  score: number;
+  tier: "high" | "medium" | "low";
+} {
+  const adapted: Signal = {
+    signal_id: "",
+    company_id: "",
+    signal_type: finding.signal_type,
+    source: finding.source ?? "",
+    title: finding.title ?? "",
+    content: finding.summary ?? "",
+    url: finding.url ?? null,
+    detected_at: finding.detected_at ?? null,
+    created_at: new Date().toISOString(),
+  };
+  return scoreSignal(adapted);
 }
