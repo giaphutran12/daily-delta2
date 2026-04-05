@@ -23,11 +23,9 @@ import {
   finalizeCompanyAgents,
   maybeReuseRecentReport,
   pollCompanyAgents,
+  processCompanySignals,
   submitCompanyAgents,
 } from "@/services/pipeline-service";
-
-const AGENT_POLL_INTERVAL = "1 min";
-const MAX_AGENT_POLLS = 480;
 
 function sanitizeStepId(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 48);
@@ -106,31 +104,8 @@ export const processCompanyPipelineRun = inngest.createFunction(
         return reused.result;
       }
 
-      await step.run("submit-company-agents", () =>
-        submitCompanyAgents(data.companyRunId),
-      );
-
-      let pollResult = await step.run("poll-company-agents-0", () =>
-        pollCompanyAgents(data.companyRunId),
-      );
-
-      let pollAttempt = 0;
-      while (!pollResult.terminal) {
-        pollAttempt += 1;
-        if (pollAttempt > MAX_AGENT_POLLS) {
-          throw new Error(
-            `Company run ${data.companyRunId} exceeded the maximum poll budget`,
-          );
-        }
-
-        await step.sleep(`wait-for-company-agents-${pollAttempt}`, AGENT_POLL_INTERVAL);
-        pollResult = await step.run(`poll-company-agents-${pollAttempt}`, () =>
-          pollCompanyAgents(data.companyRunId),
-        );
-      }
-
-      const result = await step.run("finalize-company-agents", () =>
-        finalizeCompanyAgents(data.companyRunId),
+      const result = await step.run("process-company-signals", () =>
+        processCompanySignals(data.companyRunId),
       );
 
       await step.sendEvent("notify-company-run-completed", {

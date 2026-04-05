@@ -254,34 +254,51 @@ export async function runTinyfishAgentSync(
   }
 }
 
+const QUEUE_MAX_RETRIES = 2;
+const QUEUE_RETRY_BASE_MS = 1000;
+
 export async function queueTinyfishAgent(
   config: TinyfishRequest,
 ): Promise<TinyfishAsyncResponse> {
-  const client = getClient();
-  const response = await client.agent.queue({
-    url: config.url,
-    goal: config.goal,
-  });
+  let lastError: unknown;
 
-  if (response.error) {
-    return {
-      run_id: null,
-      status: "failed",
-      result: null,
-      error: {
-        code: "QUEUE_FAILED",
-        message: response.error.message,
-        category: response.error.category,
-      },
-    };
+  for (let attempt = 0; attempt <= QUEUE_MAX_RETRIES; attempt++) {
+    try {
+      const client = getClient();
+      const response = await client.agent.queue({
+        url: config.url,
+        goal: config.goal,
+      });
+
+      if (response.error) {
+        return {
+          run_id: null,
+          status: "failed",
+          result: null,
+          error: {
+            code: "QUEUE_FAILED",
+            message: response.error.message,
+            category: response.error.category,
+          },
+        };
+      }
+
+      return {
+        run_id: response.run_id,
+        status: "queued",
+        result: null,
+        error: null,
+      };
+    } catch (err) {
+      lastError = err;
+      if (attempt < QUEUE_MAX_RETRIES) {
+        const delay = QUEUE_RETRY_BASE_MS * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
 
-  return {
-    run_id: response.run_id,
-    status: "queued",
-    result: null,
-    error: null,
-  };
+  throw lastError;
 }
 
 export async function getTinyfishRun(
@@ -302,4 +319,125 @@ export async function getTinyfishRun(
         }
       : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Search API — GET https://api.search.tinyfish.ai/search
+// ---------------------------------------------------------------------------
+
+export interface TinyfishSearchResult {
+  query: string;
+  results: Array<{
+    position: number;
+    site_name: string;
+    title: string;
+    snippet: string;
+    url: string;
+  }>;
+  total_results: number;
+}
+
+const REST_MAX_RETRIES = 2;
+const REST_RETRY_BASE_MS = 1000;
+
+function getApiKey(): string {
+  const key = process.env.TINYFISH_API_KEY;
+  if (!key) throw new Error("TINYFISH_API_KEY is not set");
+  return key;
+}
+
+async function fetchWithRetry(
+  input: string | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= REST_MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(input, init);
+      if (response.status === 429 || response.status >= 500) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      return response;
+    } catch (err) {
+      lastError = err;
+      if (attempt < REST_MAX_RETRIES) {
+        const delay = REST_RETRY_BASE_MS * Math.pow(2, attempt);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+  throw lastError;
+}
+
+export async function tinyfishSearch(
+  query: string,
+  options?: { location?: string; language?: string },
+): Promise<TinyfishSearchResult> {
+  const url = new URL("https://api.search.tinyfish.ai/search");
+  url.searchParams.set("query", query);
+  if (options?.location) url.searchParams.set("location", options.location);
+  if (options?.language) url.searchParams.set("language", options.language);
+
+  const response = await fetch(url, {
+    headers: { "X-API-Key": getApiKey() },
+    signal: AbortSignal.timeout(3000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`TinyFish Search failed (${response.status})`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    throw new Error("TinyFish Search returned non-JSON (endpoint not live)");
+  }
+
+  return (await response.json()) as TinyfishSearchResult;
+}
+
+// ---------------------------------------------------------------------------
+// Fetch API — POST https://api.fetch.tinyfish.ai/fetch
+// ---------------------------------------------------------------------------
+
+export interface TinyfishFetchResult {
+  results: Array<{
+    url: string;
+    final_url: string;
+    title: string | null;
+    description: string | null;
+    language: string | null;
+    author: string | null;
+    published_date: string | null;
+    text: string;
+    links?: string[];
+    image_links?: string[];
+  }>;
+  errors: Array<{
+    url: string;
+    error: string;
+  }>;
+}
+
+export async function tinyfishFetch(
+  urls: string[],
+  options?: { format?: "markdown" | "html" | "json" },
+): Promise<TinyfishFetchResult> {
+  const response = await fetchWithRetry("https://api.fetch.tinyfish.ai/fetch", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": getApiKey(),
+    },
+    body: JSON.stringify({
+      urls,
+      format: options?.format ?? "markdown",
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`TinyFish Fetch failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as TinyfishFetchResult;
 }
