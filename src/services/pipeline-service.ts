@@ -22,8 +22,11 @@ import {
   storeReport,
 } from "@/services/report-service";
 import { getSignalDefinitions } from "@/services/signal-definition-service";
-import { getTinyfishRun, queueTinyfishAgent } from "@/services/tinyfish-client";
+import { getTinyfishRun, queueTinyfishAgent, runTinyfishAgentSync, tinyfishSearch } from "@/services/tinyfish-client";
 import { scoreSignalFinding, classifyFreshness } from "@/services/signal-scoring";
+import { resolveTemplate } from "@/lib/utils/template";
+import { Readability } from "@mozilla/readability";
+import { parseHTML } from "linkedom";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -700,6 +703,352 @@ export async function failCompanyRun(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Search + Fetch + LLM Extract pipeline (replaces browser agents)
+// ---------------------------------------------------------------------------
+
+const SEARCH_ENGINE_HOSTS = new Set([
+  "google.com",
+  "www.google.com",
+  "news.google.com",
+  "techcrunch.com",
+  "www.techcrunch.com",
+  "github.com",
+  "www.github.com",
+  "trends.google.com",
+]);
+
+function isSearchBasedDefinition(targetUrl: string): boolean {
+  try {
+    const host = new URL(targetUrl).hostname;
+    return SEARCH_ENGINE_HOSTS.has(host);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Use a TinyFish browser agent to Google a query and return the top result URLs.
+ * The agent navigates the JS-rendered search page and extracts organic result links.
+ */
+async function agentSearchForUrls(query: string): Promise<string[]> {
+  const googleUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  const goal = [
+    "You are on a Google search results page.",
+    "Extract the URLs of the top 10 organic search results.",
+    "Skip ads, 'People also ask', related searches, and Google internal links.",
+    'Return ONLY a JSON array of URL strings. Example: ["https://example.com/article1", "https://example.com/article2"]',
+  ].join(" ");
+
+  const response = await runTinyfishAgentSync({ url: googleUrl, goal });
+
+  if (response.status !== "COMPLETED" || !response.result) {
+    return [];
+  }
+
+  const raw =
+    typeof response.result === "string"
+      ? response.result
+      : JSON.stringify(response.result);
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (u): u is string => typeof u === "string" && u.startsWith("http"),
+      );
+    }
+  } catch {
+    // Fallback: extract URLs via regex
+    const urlMatches = raw.match(/https?:\/\/[^\s"',\]]+/g);
+    return urlMatches?.slice(0, 10) ?? [];
+  }
+
+  return [];
+}
+
+function buildSearchQuery(
+  company: Company,
+  definition: SignalDefinition,
+): string {
+  const name = company.company_name;
+  switch (definition.signal_type) {
+    case "general_news":
+      return `"${name}" news funding launch announcement`;
+    case "tc_signal":
+      return `"${name}" site:techcrunch.com`;
+    case "fundraising_signal":
+      return `"${name}" funding financing series round crunchbase`;
+    case "competitive_landscape":
+      return `"${name}" competitors alternatives vs`;
+    case "founder_contact":
+      return `site:linkedin.com "${name}" founder CEO co-founder`;
+    case "leading_indicator":
+      return `"${name}" growth trending traction surge`;
+    default:
+      return `"${name}" ${definition.signal_type.replace(/_/g, " ")}`;
+  }
+}
+
+async function rawFetchPage(
+  url: string,
+): Promise<{ url: string; title: string | null; text: string; error?: string }> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        Accept: "text/html,application/xhtml+xml",
+      },
+      redirect: "follow",
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      return { url, title: null, text: "", error: `HTTP ${response.status}` };
+    }
+
+    const html = await response.text();
+    const { document } = parseHTML(html);
+    const reader = new Readability(document as unknown as Document);
+    const article = reader.parse();
+
+    if (article) {
+      return {
+        url,
+        title: article.title ?? null,
+        text: (article.textContent ?? "").replace(/\s+/g, " ").trim(),
+      };
+    }
+
+    const bodyText = document.body?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    return { url, title: document.title || null, text: bodyText.slice(0, 50000) };
+  } catch (err) {
+    return {
+      url,
+      title: null,
+      text: "",
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function buildExtractionPrompt(
+  companyName: string,
+  definition: SignalDefinition,
+  pageContent: string,
+): string {
+  const truncated = pageContent.slice(0, 12000);
+  return `You are a ${definition.name} analyst for ${companyName}.
+
+Analyze the following web page content and extract relevant signals.
+
+TASK: ${definition.search_instructions}
+
+WEB PAGE CONTENT:
+${truncated}
+
+Return JSON:
+{
+  "signals": [
+    {
+      "signal_type": "${definition.signal_type}",
+      "title": "...",
+      "summary": "...",
+      "source": "...",
+      "url": "...",
+      "detected_at": "YYYY-MM-DD"
+    }
+  ]
+}
+
+IMPORTANT: For detected_at, use the actual date from the content. Do NOT use today's date. If no date is visible, omit the field.
+Only include genuinely meaningful findings. Return {"signals": []} if nothing relevant is found. Be factual.`;
+}
+
+async function extractSignalsFromContent(
+  companyName: string,
+  definition: SignalDefinition,
+  pages: Array<{ url: string; title: string | null; text: string }>,
+): Promise<SignalFinding[]> {
+  if (pages.length === 0) return [];
+
+  const combinedContent = pages
+    .map((p) => `--- ${p.title ?? p.url} ---\n${p.text}`)
+    .join("\n\n");
+
+  if (combinedContent.trim().length < 50) return [];
+
+  try {
+    const { text } = await generateText({
+      model: anthropic("claude-haiku-4-5-20251001"),
+      prompt: buildExtractionPrompt(companyName, definition, combinedContent),
+    });
+
+    // LLMs may wrap JSON in markdown code fences — extract the JSON object first
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const parsed = parseTinyfishFindings(
+      jsonMatch ? jsonMatch[0] : text,
+      definition.id,
+    );
+    return parsed.findings;
+  } catch (err) {
+    console.warn(
+      "[PIPELINE] LLM extraction failed for %s/%s: %s",
+      companyName,
+      definition.name,
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}
+
+export async function processCompanySignals(
+  companyRunId: string,
+): Promise<FinalizedCompanyRun> {
+  const companyRun = await getCompanyPipelineRun(companyRunId);
+  if (!companyRun) {
+    throw new Error(`Company pipeline run ${companyRunId} not found`);
+  }
+
+  // Mark as running
+  const now = new Date().toISOString();
+  await markCompanyRunState(companyRunId, {
+    status: "running",
+    started_at: now,
+  });
+
+  const supabase = createAdminClient();
+  await supabase
+    .from("pipeline_request_companies")
+    .update({ status: "running", updated_at: now })
+    .eq("company_run_id", companyRunId)
+    .eq("status", "queued");
+
+  const company = await getCompanyById(companyRun.company_id);
+  if (!company) {
+    return failCompanyRun(companyRunId, `Company ${companyRun.company_id} not found`);
+  }
+
+  const definitions = await getSignalDefinitions(company.company_id);
+  const enabledDefinitions = definitions.filter((d) => d.enabled);
+  const tag = `[PIPELINE] [${company.company_name}]`;
+
+  console.log(
+    "%s Processing %d definitions via search+fetch+extract",
+    tag,
+    enabledDefinitions.length,
+  );
+
+  // Process each definition in parallel — use allSettled so one failure
+  // doesn't discard results from other definitions
+  const settledResults = await Promise.allSettled(
+    enabledDefinitions.map(async (definition): Promise<SignalFinding[]> => {
+      const resolvedUrl = resolveTemplate(definition.target_url, company);
+
+      if (isSearchBasedDefinition(resolvedUrl)) {
+        // Search-based: find URLs via search, then raw fetch + LLM extract
+        const query = buildSearchQuery(company, definition);
+        let searchUrls: string[] = [];
+
+        // Try TinyFish Search API first (fastest when available)
+        try {
+          const searchResult = await tinyfishSearch(query);
+          searchUrls = searchResult.results.slice(0, 5).map((r) => r.url);
+          console.log(
+            "%s [%s] Search API found %d results",
+            tag,
+            definition.name,
+            searchUrls.length,
+          );
+        } catch (err) {
+          // Search API not available — use agent to Google search
+          console.log(
+            "%s [%s] Search API unavailable (%s), using agent to search: %s",
+            tag,
+            definition.name,
+            err instanceof Error ? err.message : String(err),
+            query,
+          );
+          searchUrls = await agentSearchForUrls(query);
+          console.log(
+            "%s [%s] Agent search found %d results",
+            tag,
+            definition.name,
+            searchUrls.length,
+          );
+        }
+
+        // Fetch all search result pages
+        const pages = await Promise.all(searchUrls.map(rawFetchPage));
+        const successPages = pages.filter((p) => !p.error && p.text.length > 50);
+
+        return extractSignalsFromContent(company.company_name, definition, successPages);
+      }
+
+      // Deterministic: directly fetch the company page
+      console.log("%s [%s] Fetching %s", tag, definition.name, resolvedUrl);
+      const page = await rawFetchPage(resolvedUrl);
+
+      if (page.error || page.text.length < 50) {
+        console.warn(
+          "%s [%s] Fetch failed: %s",
+          tag,
+          definition.name,
+          page.error ?? "empty content",
+        );
+        return [];
+      }
+
+      return extractSignalsFromContent(company.company_name, definition, [page]);
+    }),
+  );
+
+  const findings = settledResults
+    .filter(
+      (r): r is PromiseFulfilledResult<SignalFinding[]> =>
+        r.status === "fulfilled",
+    )
+    .flatMap((r) => r.value);
+
+  const failedDefinitions = settledResults.filter(
+    (r) => r.status === "rejected",
+  );
+  if (failedDefinitions.length > 0) {
+    console.warn(
+      "%s %d/%d definitions failed during processing",
+      tag,
+      failedDefinitions.length,
+      enabledDefinitions.length,
+    );
+  }
+  console.log("%s Extracted %d total findings", tag, findings.length);
+
+  // Feed into existing dedup + score + report pipeline
+  const result = await persistCompanyFindings(
+    company,
+    definitions,
+    toReportTrigger(companyRun.requested_source),
+    findings,
+  );
+
+  await markCompanyRunState(companyRunId, {
+    status: "completed",
+    report_id: result.reportId ?? null,
+    signal_count: result.signalCount,
+    error: null,
+    completed_at: new Date().toISOString(),
+  });
+
+  return {
+    companyRunId,
+    companyId: company.company_id,
+    status: "completed",
+    signalCount: result.signalCount,
+    reportId: result.reportId,
+  };
+}
+
 export async function maybeReuseRecentReport(
   companyRunId: string,
 ): Promise<MaybeReusedCompanyRun> {
@@ -910,9 +1259,31 @@ export async function submitCompanyAgents(
   );
 
   const supabase = createAdminClient();
-  await Promise.all(
+  const results = await Promise.allSettled(
     agentsToSubmit.map(async (agent) => {
-      const queued = await queueTinyfishAgent({ url: agent.url, goal: agent.goal });
+      let queued;
+      try {
+        queued = await queueTinyfishAgent({ url: agent.url, goal: agent.goal });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          "[PIPELINE] Failed to queue agent %s for company %s: %s",
+          agent.name,
+          company.company_name,
+          message,
+        );
+        queued = {
+          run_id: null,
+          status: "failed" as const,
+          result: null,
+          error: {
+            code: "QUEUE_EXCEPTION",
+            message,
+            category: "runtime",
+          },
+        };
+      }
+
       const payload = {
         company_run_id: companyRunId,
         company_id: company.company_id,
@@ -926,10 +1297,22 @@ export async function submitCompanyAgents(
 
       const { error } = await supabase.from("company_agent_runs").insert(payload);
       if (error) {
-        throw new Error(`Failed to create company agent run: ${error.message}`);
+        throw new Error(
+          `Failed to insert agent run for ${agent.name}: ${error.message}`,
+        );
       }
     }),
   );
+
+  const failedSubmissions = results.filter((r) => r.status === "rejected");
+  if (failedSubmissions.length > 0) {
+    console.warn(
+      "[PIPELINE] %d/%d agent submissions failed for company %s",
+      failedSubmissions.length,
+      agentsToSubmit.length,
+      company.company_name,
+    );
+  }
 
   return {
     companyRunId,
