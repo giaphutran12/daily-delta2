@@ -885,7 +885,12 @@ async function extractSignalsFromContent(
       prompt: buildExtractionPrompt(companyName, definition, combinedContent),
     });
 
-    const parsed = parseTinyfishFindings(text, definition.id);
+    // LLMs may wrap JSON in markdown code fences — extract the JSON object first
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    const parsed = parseTinyfishFindings(
+      jsonMatch ? jsonMatch[0] : text,
+      definition.id,
+    );
     return parsed.findings;
   } catch (err) {
     console.warn(
@@ -935,8 +940,9 @@ export async function processCompanySignals(
     enabledDefinitions.length,
   );
 
-  // Process each definition in parallel
-  const allFindings = await Promise.all(
+  // Process each definition in parallel — use allSettled so one failure
+  // doesn't discard results from other definitions
+  const settledResults = await Promise.allSettled(
     enabledDefinitions.map(async (definition): Promise<SignalFinding[]> => {
       const resolvedUrl = resolveTemplate(definition.target_url, company);
 
@@ -955,12 +961,13 @@ export async function processCompanySignals(
             definition.name,
             searchUrls.length,
           );
-        } catch {
+        } catch (err) {
           // Search API not available — use agent to Google search
           console.log(
-            "%s [%s] Search API unavailable, using agent to search: %s",
+            "%s [%s] Search API unavailable (%s), using agent to search: %s",
             tag,
             definition.name,
+            err instanceof Error ? err.message : String(err),
             query,
           );
           searchUrls = await agentSearchForUrls(query);
@@ -997,7 +1004,24 @@ export async function processCompanySignals(
     }),
   );
 
-  const findings = allFindings.flat();
+  const findings = settledResults
+    .filter(
+      (r): r is PromiseFulfilledResult<SignalFinding[]> =>
+        r.status === "fulfilled",
+    )
+    .flatMap((r) => r.value);
+
+  const failedDefinitions = settledResults.filter(
+    (r) => r.status === "rejected",
+  );
+  if (failedDefinitions.length > 0) {
+    console.warn(
+      "%s %d/%d definitions failed during processing",
+      tag,
+      failedDefinitions.length,
+      enabledDefinitions.length,
+    );
+  }
   console.log("%s Extracted %d total findings", tag, findings.length);
 
   // Feed into existing dedup + score + report pipeline
@@ -1273,10 +1297,8 @@ export async function submitCompanyAgents(
 
       const { error } = await supabase.from("company_agent_runs").insert(payload);
       if (error) {
-        console.warn(
-          "[PIPELINE] Failed to insert agent run for %s: %s",
-          agent.name,
-          error.message,
+        throw new Error(
+          `Failed to insert agent run for ${agent.name}: ${error.message}`,
         );
       }
     }),

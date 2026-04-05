@@ -20,11 +20,8 @@ import {
 } from "@/services/pipeline-request-service";
 import {
   failCompanyRun,
-  finalizeCompanyAgents,
   maybeReuseRecentReport,
-  pollCompanyAgents,
   processCompanySignals,
-  submitCompanyAgents,
 } from "@/services/pipeline-service";
 
 function sanitizeStepId(value: string): string {
