@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "qa:tinyfish": "node scripts/run-tinyfish-qa.mjs"
+    "qa:tinyfish": "node scripts/run-tinyfish-qa.mjs",
+    "bench:pipeline-modes": "tsx scripts/benchmark-pipeline-modes.ts",
+    "share:tinyfi": "sh ./scripts/share-via-tinyfi.sh"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.63",
@@ -54,6 +56,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
