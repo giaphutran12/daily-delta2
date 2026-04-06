@@ -333,10 +333,10 @@ export async function processCompany(
       enabledDefinitions.length,
     );
 
-    // 2. Run intelligence agents
-    console.log("%s Running intelligence agents...", tag);
-    const findings = await runIntelligenceAgentsSilent(company, enabledDefinitions);
-    console.log("%s Agents returned %d findings", tag, findings.length);
+    // 2. Run the canonical production pipeline
+    console.log("%s Running default pipeline (search+fetch+extract)...", tag);
+    const findings = await collectFindingsViaDefaultPipeline(company, definitions);
+    console.log("%s Pipeline returned %d findings", tag, findings.length);
 
     // 3. Deduplicate against existing signals (fast filters: title+date, URL)
     const newFindings = await deduplicateFindings(company.company_id, findings);
@@ -903,6 +903,188 @@ async function extractSignalsFromContent(
   }
 }
 
+// Canonical production pipeline. Keep benchmark-only legacy helpers separate.
+async function collectFindingsViaDefaultPipeline(
+  company: Company,
+  definitions: SignalDefinition[],
+): Promise<SignalFinding[]> {
+  return collectFindingsViaSearchFetchExtract(company, definitions);
+}
+
+async function collectFindingsViaSearchFetchExtract(
+  company: Company,
+  definitions: SignalDefinition[],
+): Promise<SignalFinding[]> {
+  const enabledDefinitions = definitions.filter((d) => d.enabled);
+  const tag = `[PIPELINE] [${company.company_name}]`;
+
+  console.log(
+    "%s Processing %d definitions via search+fetch+extract",
+    tag,
+    enabledDefinitions.length,
+  );
+
+  const settledResults = await Promise.allSettled(
+    enabledDefinitions.map(async (definition): Promise<SignalFinding[]> => {
+      const resolvedUrl = resolveTemplate(definition.target_url, company);
+
+      if (isSearchBasedDefinition(resolvedUrl)) {
+        const query = buildSearchQuery(company, definition);
+        let searchUrls: string[] = [];
+
+        try {
+          const searchResult = await tinyfishSearch(query);
+          searchUrls = searchResult.results.slice(0, 5).map((r) => r.url);
+          console.log(
+            "%s [%s] Search API found %d results",
+            tag,
+            definition.name,
+            searchUrls.length,
+          );
+        } catch (err) {
+          console.log(
+            "%s [%s] Search API unavailable (%s), using agent to search: %s",
+            tag,
+            definition.name,
+            err instanceof Error ? err.message : String(err),
+            query,
+          );
+          searchUrls = await agentSearchForUrls(query);
+          console.log(
+            "%s [%s] Agent search found %d results",
+            tag,
+            definition.name,
+            searchUrls.length,
+          );
+        }
+
+        const pages = await Promise.all(searchUrls.map(rawFetchPage));
+        const successPages = pages.filter((p) => !p.error && p.text.length > 50);
+
+        return extractSignalsFromContent(company.company_name, definition, successPages);
+      }
+
+      console.log("%s [%s] Fetching %s", tag, definition.name, resolvedUrl);
+      const page = await rawFetchPage(resolvedUrl);
+
+      if (page.error || page.text.length < 50) {
+        console.warn(
+          "%s [%s] Fetch failed: %s",
+          tag,
+          definition.name,
+          page.error ?? "empty content",
+        );
+        return [];
+      }
+
+      return extractSignalsFromContent(company.company_name, definition, [page]);
+    }),
+  );
+
+  const findings = settledResults
+    .filter(
+      (r): r is PromiseFulfilledResult<SignalFinding[]> =>
+        r.status === "fulfilled",
+    )
+    .flatMap((r) => r.value);
+
+  const failedDefinitions = settledResults.filter((r) => r.status === "rejected");
+  if (failedDefinitions.length > 0) {
+    console.warn(
+      "%s %d/%d definitions failed during processing",
+      tag,
+      failedDefinitions.length,
+      enabledDefinitions.length,
+    );
+  }
+  console.log("%s Extracted %d total findings", tag, findings.length);
+
+  return findings;
+}
+
+export async function benchmarkCompanyWithLegacyAgents(
+  company: Company,
+  definitions: SignalDefinition[],
+  trigger: "manual" | "cron" = "manual",
+): Promise<CompanyPipelineResult> {
+  const tag = `[BENCH] [LEGACY] [${company.company_name}]`;
+  const startTime = Date.now();
+
+  try {
+    const enabledDefinitions = definitions.filter((d) => d.enabled);
+    console.log(
+      "%s Running %d TinyFish-agent definitions",
+      tag,
+      enabledDefinitions.length,
+    );
+
+    const findings = await runIntelligenceAgentsSilent(company, enabledDefinitions);
+    console.log("%s Agents returned %d findings", tag, findings.length);
+
+    const result = await persistCompanyFindings(company, definitions, trigger, findings);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(
+      "%s Done in %ss — %d digest signals",
+      tag,
+      elapsed,
+      result.signalCount,
+    );
+    return result;
+  } catch (error) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(
+      "%s FAILED after %ss: %s",
+      tag,
+      elapsed,
+      error instanceof Error ? error.message : String(error),
+    );
+    return {
+      companyId: company.company_id,
+      companyName: company.company_name,
+      signalCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+      findings: [],
+    };
+  }
+}
+
+export async function benchmarkCompanyWithSearchFetchExtract(
+  company: Company,
+  definitions: SignalDefinition[],
+  trigger: "manual" | "cron" = "manual",
+): Promise<CompanyPipelineResult> {
+  const tag = `[BENCH] [FETCH] [${company.company_name}]`;
+  const startTime = Date.now();
+
+  try {
+    const findings = await collectFindingsViaSearchFetchExtract(company, definitions);
+    const result = await persistCompanyFindings(company, definitions, trigger, findings);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(
+      "%s Done in %ss — %d digest signals",
+      tag,
+      elapsed,
+      result.signalCount,
+    );
+    return result;
+  } catch (error) {
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.error(
+      "%s FAILED after %ss: %s",
+      tag,
+      elapsed,
+      error instanceof Error ? error.message : String(error),
+    );
+    return {
+      companyId: company.company_id,
+      companyName: company.company_name,
+      signalCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+      findings: [],
+    };
+  }
+}
+
 export async function processCompanySignals(
   companyRunId: string,
 ): Promise<FinalizedCompanyRun> {
@@ -931,98 +1113,7 @@ export async function processCompanySignals(
   }
 
   const definitions = await getSignalDefinitions(company.company_id);
-  const enabledDefinitions = definitions.filter((d) => d.enabled);
-  const tag = `[PIPELINE] [${company.company_name}]`;
-
-  console.log(
-    "%s Processing %d definitions via search+fetch+extract",
-    tag,
-    enabledDefinitions.length,
-  );
-
-  // Process each definition in parallel — use allSettled so one failure
-  // doesn't discard results from other definitions
-  const settledResults = await Promise.allSettled(
-    enabledDefinitions.map(async (definition): Promise<SignalFinding[]> => {
-      const resolvedUrl = resolveTemplate(definition.target_url, company);
-
-      if (isSearchBasedDefinition(resolvedUrl)) {
-        // Search-based: find URLs via search, then raw fetch + LLM extract
-        const query = buildSearchQuery(company, definition);
-        let searchUrls: string[] = [];
-
-        // Try TinyFish Search API first (fastest when available)
-        try {
-          const searchResult = await tinyfishSearch(query);
-          searchUrls = searchResult.results.slice(0, 5).map((r) => r.url);
-          console.log(
-            "%s [%s] Search API found %d results",
-            tag,
-            definition.name,
-            searchUrls.length,
-          );
-        } catch (err) {
-          // Search API not available — use agent to Google search
-          console.log(
-            "%s [%s] Search API unavailable (%s), using agent to search: %s",
-            tag,
-            definition.name,
-            err instanceof Error ? err.message : String(err),
-            query,
-          );
-          searchUrls = await agentSearchForUrls(query);
-          console.log(
-            "%s [%s] Agent search found %d results",
-            tag,
-            definition.name,
-            searchUrls.length,
-          );
-        }
-
-        // Fetch all search result pages
-        const pages = await Promise.all(searchUrls.map(rawFetchPage));
-        const successPages = pages.filter((p) => !p.error && p.text.length > 50);
-
-        return extractSignalsFromContent(company.company_name, definition, successPages);
-      }
-
-      // Deterministic: directly fetch the company page
-      console.log("%s [%s] Fetching %s", tag, definition.name, resolvedUrl);
-      const page = await rawFetchPage(resolvedUrl);
-
-      if (page.error || page.text.length < 50) {
-        console.warn(
-          "%s [%s] Fetch failed: %s",
-          tag,
-          definition.name,
-          page.error ?? "empty content",
-        );
-        return [];
-      }
-
-      return extractSignalsFromContent(company.company_name, definition, [page]);
-    }),
-  );
-
-  const findings = settledResults
-    .filter(
-      (r): r is PromiseFulfilledResult<SignalFinding[]> =>
-        r.status === "fulfilled",
-    )
-    .flatMap((r) => r.value);
-
-  const failedDefinitions = settledResults.filter(
-    (r) => r.status === "rejected",
-  );
-  if (failedDefinitions.length > 0) {
-    console.warn(
-      "%s %d/%d definitions failed during processing",
-      tag,
-      failedDefinitions.length,
-      enabledDefinitions.length,
-    );
-  }
-  console.log("%s Extracted %d total findings", tag, findings.length);
+  const findings = await collectFindingsViaDefaultPipeline(company, definitions);
 
   // Feed into existing dedup + score + report pipeline
   const result = await persistCompanyFindings(
@@ -1113,6 +1204,100 @@ export async function maybeReuseRecentReport(
       reportId: recent.report.report_id,
     },
   };
+}
+
+export type PipelineBenchmarkMode =
+  | "legacy_tinyfish_agents"
+  | "search_fetch_extract";
+
+export interface CompanyPipelineAnalysis {
+  mode: PipelineBenchmarkMode;
+  companyId: string;
+  companyName: string;
+  durationMs: number;
+  rawFindingCount: number;
+  newFindingCount: number;
+  finalFindingCount: number;
+  digestFindingCount: number;
+  highFreshCount: number;
+  canaryCaptured: boolean;
+  findings: SignalFinding[];
+  digestFindings: SignalFinding[];
+  error?: string;
+}
+
+async function collectFindingsForMode(
+  mode: PipelineBenchmarkMode,
+  company: Company,
+  definitions: SignalDefinition[],
+): Promise<SignalFinding[]> {
+  if (mode === "legacy_tinyfish_agents") {
+    const enabledDefinitions = definitions.filter((definition) => definition.enabled);
+    return runIntelligenceAgentsSilent(company, enabledDefinitions);
+  }
+
+  return collectFindingsViaSearchFetchExtract(company, definitions);
+}
+
+export async function analyzeCompanyWithMode(
+  mode: PipelineBenchmarkMode,
+  company: Company,
+  definitions: SignalDefinition[],
+): Promise<CompanyPipelineAnalysis> {
+  const startedAt = Date.now();
+
+  try {
+    const rawFindings = await collectFindingsForMode(mode, company, definitions);
+    const newFindings = await deduplicateFindings(company.company_id, rawFindings);
+    const finalFindings = await llmDedup(company.company_id, newFindings);
+
+    for (const finding of finalFindings) {
+      const { score, tier } = scoreSignalFinding(finding);
+      finding.priority_score = score;
+      finding.priority_tier = tier;
+      finding.freshness_class = classifyFreshness(finding.detected_at);
+    }
+
+    const digestFindings = finalFindings.filter(
+      (finding) =>
+        finding.priority_tier !== "low" && finding.freshness_class !== "stale",
+    );
+    const highFreshCount = digestFindings.filter(
+      (finding) =>
+        finding.priority_tier === "high" && finding.freshness_class === "fresh",
+    ).length;
+
+    return {
+      mode,
+      companyId: company.company_id,
+      companyName: company.company_name,
+      durationMs: Date.now() - startedAt,
+      rawFindingCount: rawFindings.length,
+      newFindingCount: newFindings.length,
+      finalFindingCount: finalFindings.length,
+      digestFindingCount: digestFindings.length,
+      highFreshCount,
+      canaryCaptured: highFreshCount > 0,
+      findings: finalFindings,
+      digestFindings,
+    };
+  } catch (error) {
+    return {
+      mode,
+      companyId: company.company_id,
+      companyName: company.company_name,
+      durationMs: Date.now() - startedAt,
+      rawFindingCount: 0,
+      newFindingCount: 0,
+      finalFindingCount: 0,
+      digestFindingCount: 0,
+      highFreshCount: 0,
+      canaryCaptured: false,
+      findings: [],
+      digestFindings: [],
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 async function persistCompanyFindings(
