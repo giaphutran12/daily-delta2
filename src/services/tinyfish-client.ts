@@ -1,3 +1,5 @@
+import { TinyFish, RunStatus } from "@tiny-fish/sdk";
+
 const AGENT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const TINYFISH_REST_API_BASE = "https://agent.tinyfish.ai/v1";
 
@@ -44,64 +46,21 @@ export interface TinyfishAsyncResponse {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-interface TinyFishRunError {
-  message: string;
-  category: string;
-}
-
-interface TinyFishQueuedRun {
-  run_id: string | null;
-  error: TinyFishRunError | null;
-}
-
-interface TinyFishRunRecord {
-  run_id: string;
-  status: string;
-  result: unknown;
-  error: TinyFishRunError | null;
-}
-
-interface TinyFishClientLike {
-  agent: {
-    stream(input: TinyfishRequest): Promise<AsyncIterable<unknown>>;
-    queue(input: TinyfishRequest): Promise<TinyFishQueuedRun>;
-  };
-  runs: {
-    get(runId: string): Promise<TinyFishRunRecord>;
-  };
-}
-
-type TinyFishSdkModule = {
-  TinyFish: new () => TinyFishClientLike;
-};
-
-let sdkPromise: Promise<TinyFishSdkModule> | null = null;
-
-async function loadTinyFishSdk(): Promise<TinyFishSdkModule> {
-  if (!sdkPromise) {
-    sdkPromise = import(
-      new URL("../../node_modules/@tiny-fish/sdk/dist/index.js", import.meta.url).href
-    ) as Promise<TinyFishSdkModule>;
-  }
-  return sdkPromise;
-}
-
-async function getClient(): Promise<TinyFishClientLike> {
-  const { TinyFish } = await loadTinyFishSdk();
+function getClient(): TinyFish {
   return new TinyFish(); // reads TINYFISH_API_KEY from env
 }
 
-function mapRunStatus(status: string): TinyfishAsyncRunStatus {
-  switch (status.toUpperCase()) {
-    case "PENDING":
+function mapRunStatus(status: RunStatus): TinyfishAsyncRunStatus {
+  switch (status) {
+    case RunStatus.PENDING:
       return "queued";
-    case "RUNNING":
+    case RunStatus.RUNNING:
       return "running";
-    case "COMPLETED":
+    case RunStatus.COMPLETED:
       return "completed";
-    case "CANCELLED":
+    case RunStatus.CANCELLED:
       return "canceled";
-    case "FAILED":
+    case RunStatus.FAILED:
     default:
       return "failed";
   }
@@ -144,7 +103,7 @@ export function startTinyfishAgent(
 
   (async () => {
     try {
-      const client = await getClient();
+      const client = getClient();
       const stream = await client.agent.stream({
         url: config.url,
         goal: config.goal,
@@ -221,7 +180,7 @@ export function startTinyfishAgent(
 export async function runTinyfishAgentSync(
   config: TinyfishRequest,
 ): Promise<TinyfishSyncResponse> {
-  const client = await getClient();
+  const client = getClient();
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), AGENT_TIMEOUT_MS);
@@ -306,7 +265,7 @@ export async function queueTinyfishAgent(
 
   for (let attempt = 0; attempt <= QUEUE_MAX_RETRIES; attempt++) {
     try {
-      const client = await getClient();
+      const client = getClient();
       const response = await client.agent.queue({
         url: config.url,
         goal: config.goal,
@@ -346,7 +305,7 @@ export async function queueTinyfishAgent(
 export async function getTinyfishRun(
   runId: string,
 ): Promise<TinyfishAsyncResponse> {
-  const client = await getClient();
+  const client = getClient();
   const run = await client.runs.get(runId);
 
   return {
