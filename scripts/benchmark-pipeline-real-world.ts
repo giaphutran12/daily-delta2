@@ -77,6 +77,7 @@ function timeoutAnalysis(
     canaryCaptured: false,
     findings: [],
     digestFindings: [],
+    retrievalMetrics: [],
     error,
   };
 }
@@ -497,7 +498,7 @@ function buildMarkdownReport(input: {
 }): string {
   const { args, preflightCandidates, selectedCompanies, finalResults } = input;
   const modeOrder: Array<CompanyPipelineAnalysis["mode"]> = [
-    "search_fetch_extract",
+    "exa_search_raw_fetch",
     "legacy_tinyfish_agents",
   ];
 
@@ -581,7 +582,7 @@ async function main(): Promise<void> {
 
   const preflightCandidates = pickPreflightCandidates(candidates, args);
   console.log(
-    "[REAL-BENCH] Preflighting %d candidate companies with search_fetch_extract",
+    "[REAL-BENCH] Preflighting %d candidate companies with exa_search_raw_fetch",
     preflightCandidates.length,
   );
 
@@ -590,17 +591,17 @@ async function main(): Promise<void> {
     args.concurrency,
     async (candidate) => {
       const analysis = await withTimeout(
-        `${candidate.company.company_name}/search_fetch_extract`,
+        `${candidate.company.company_name}/exa_search_raw_fetch`,
         args.maxCompanyMs,
         () =>
           analyzeCompanyWithMode(
-            "search_fetch_extract",
+            "exa_search_raw_fetch",
             candidate.company,
             candidate.definitions,
           ),
       ).catch((error) =>
         timeoutAnalysis(
-          "search_fetch_extract",
+          "exa_search_raw_fetch",
           candidate.company,
           args.maxCompanyMs,
           error instanceof Error ? error.message : String(error),
