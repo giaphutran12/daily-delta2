@@ -1,6 +1,5 @@
-import { TinyFish, RunStatus } from "@tiny-fish/sdk";
-
 const AGENT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const TINYFISH_REST_API_BASE = "https://agent.tinyfish.ai/v1";
 
 // ---------------------------------------------------------------------------
 // Public types (kept identical so callers need no changes)
@@ -45,21 +44,64 @@ export interface TinyfishAsyncResponse {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function getClient(): TinyFish {
+interface TinyFishRunError {
+  message: string;
+  category: string;
+}
+
+interface TinyFishQueuedRun {
+  run_id: string | null;
+  error: TinyFishRunError | null;
+}
+
+interface TinyFishRunRecord {
+  run_id: string;
+  status: string;
+  result: unknown;
+  error: TinyFishRunError | null;
+}
+
+interface TinyFishClientLike {
+  agent: {
+    stream(input: TinyfishRequest): Promise<AsyncIterable<unknown>>;
+    queue(input: TinyfishRequest): Promise<TinyFishQueuedRun>;
+  };
+  runs: {
+    get(runId: string): Promise<TinyFishRunRecord>;
+  };
+}
+
+type TinyFishSdkModule = {
+  TinyFish: new () => TinyFishClientLike;
+};
+
+let sdkPromise: Promise<TinyFishSdkModule> | null = null;
+
+async function loadTinyFishSdk(): Promise<TinyFishSdkModule> {
+  if (!sdkPromise) {
+    sdkPromise = import(
+      new URL("../../node_modules/@tiny-fish/sdk/dist/index.js", import.meta.url).href
+    ) as Promise<TinyFishSdkModule>;
+  }
+  return sdkPromise;
+}
+
+async function getClient(): Promise<TinyFishClientLike> {
+  const { TinyFish } = await loadTinyFishSdk();
   return new TinyFish(); // reads TINYFISH_API_KEY from env
 }
 
-function mapRunStatus(status: RunStatus): TinyfishAsyncRunStatus {
-  switch (status) {
-    case RunStatus.PENDING:
+function mapRunStatus(status: string): TinyfishAsyncRunStatus {
+  switch (status.toUpperCase()) {
+    case "PENDING":
       return "queued";
-    case RunStatus.RUNNING:
+    case "RUNNING":
       return "running";
-    case RunStatus.COMPLETED:
+    case "COMPLETED":
       return "completed";
-    case RunStatus.CANCELLED:
+    case "CANCELLED":
       return "canceled";
-    case RunStatus.FAILED:
+    case "FAILED":
     default:
       return "failed";
   }
@@ -102,7 +144,7 @@ export function startTinyfishAgent(
 
   (async () => {
     try {
-      const client = getClient();
+      const client = await getClient();
       const stream = await client.agent.stream({
         url: config.url,
         goal: config.goal,
@@ -179,7 +221,7 @@ export function startTinyfishAgent(
 export async function runTinyfishAgentSync(
   config: TinyfishRequest,
 ): Promise<TinyfishSyncResponse> {
-  const client = getClient();
+  const client = await getClient();
 
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), AGENT_TIMEOUT_MS);
@@ -264,7 +306,7 @@ export async function queueTinyfishAgent(
 
   for (let attempt = 0; attempt <= QUEUE_MAX_RETRIES; attempt++) {
     try {
-      const client = getClient();
+      const client = await getClient();
       const response = await client.agent.queue({
         url: config.url,
         goal: config.goal,
@@ -304,7 +346,7 @@ export async function queueTinyfishAgent(
 export async function getTinyfishRun(
   runId: string,
 ): Promise<TinyfishAsyncResponse> {
-  const client = getClient();
+  const client = await getClient();
   const run = await client.runs.get(runId);
 
   return {
@@ -322,7 +364,7 @@ export async function getTinyfishRun(
 }
 
 // ---------------------------------------------------------------------------
-// Search API — GET https://api.search.tinyfish.ai/search
+// Search API — GET https://agent.tinyfish.ai/v1/search
 // ---------------------------------------------------------------------------
 
 export interface TinyfishSearchResult {
@@ -373,7 +415,7 @@ export async function tinyfishSearch(
   query: string,
   options?: { location?: string; language?: string },
 ): Promise<TinyfishSearchResult> {
-  const url = new URL("https://api.search.tinyfish.ai/search");
+  const url = new URL(`${TINYFISH_REST_API_BASE}/search`);
   url.searchParams.set("query", query);
   if (options?.location) url.searchParams.set("location", options.location);
   if (options?.language) url.searchParams.set("language", options.language);
@@ -396,7 +438,7 @@ export async function tinyfishSearch(
 }
 
 // ---------------------------------------------------------------------------
-// Fetch API — POST https://api.fetch.tinyfish.ai/fetch
+// Fetch API — POST https://agent.tinyfish.ai/v1/fetch
 // ---------------------------------------------------------------------------
 
 export interface TinyfishFetchResult {
@@ -422,7 +464,7 @@ export async function tinyfishFetch(
   urls: string[],
   options?: { format?: "markdown" | "html" | "json" },
 ): Promise<TinyfishFetchResult> {
-  const response = await fetchWithRetry("https://api.fetch.tinyfish.ai/fetch", {
+  const response = await fetchWithRetry(`${TINYFISH_REST_API_BASE}/fetch`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -27,6 +27,15 @@ import { scoreSignalFinding, classifyFreshness } from "@/services/signal-scoring
 import { resolveTemplate } from "@/lib/utils/template";
 import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
+import { exaGetContents, exaSearch } from "@/services/exa-client";
+import {
+  getDefaultFetchProvider,
+  getDefaultSearchProvider,
+  isSearchBasedDefinition,
+  type FetchProvider,
+  type PipelineBenchmarkMode,
+  type SearchProvider,
+} from "@/services/retrieval-provider";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -707,24 +716,31 @@ export async function failCompanyRun(
 // Search + Fetch + LLM Extract pipeline (replaces browser agents)
 // ---------------------------------------------------------------------------
 
-const SEARCH_ENGINE_HOSTS = new Set([
-  "google.com",
-  "www.google.com",
-  "news.google.com",
-  "techcrunch.com",
-  "www.techcrunch.com",
-  "github.com",
-  "www.github.com",
-  "trends.google.com",
-]);
+interface SearchFetchPipelineOptions {
+  searchProvider?: SearchProvider;
+  fetchProvider?: FetchProvider;
+  disableCurrentSearchFallback?: boolean;
+}
 
-function isSearchBasedDefinition(targetUrl: string): boolean {
-  try {
-    const host = new URL(targetUrl).hostname;
-    return SEARCH_ENGINE_HOSTS.has(host);
-  } catch {
-    return false;
-  }
+export interface RetrievalMetric {
+  definitionId: string;
+  definitionName: string;
+  searchBased: boolean;
+  searchProviderRequested?: SearchProvider;
+  searchProviderUsed?: string;
+  fetchProviderRequested: FetchProvider;
+  searchLatencyMs: number;
+  fetchLatencyMs: number;
+  urlsDiscovered: number;
+  urlsFetched: number;
+  successfulPages: number;
+  searchError?: string;
+  fetchErrorCount: number;
+}
+
+interface SearchFetchCollectionResult {
+  findings: SignalFinding[];
+  retrievalMetrics: RetrievalMetric[];
 }
 
 /**
@@ -790,9 +806,119 @@ function buildSearchQuery(
   }
 }
 
+function isPrivateHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (
+    lower === "localhost" ||
+    lower === "0.0.0.0" ||
+    lower === "::1" ||
+    lower.endsWith(".local")
+  ) {
+    return true;
+  }
+
+  if (/^127\./.test(lower) || /^10\./.test(lower) || /^192\.168\./.test(lower)) {
+    return true;
+  }
+
+  const match = lower.match(/^172\.(\d{1,3})\./);
+  if (match) {
+    const secondOctet = Number(match[1]);
+    return secondOctet >= 16 && secondOctet <= 31;
+  }
+
+  return false;
+}
+
+function isAllowedFetchUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      (parsed.protocol === "http:" || parsed.protocol === "https:") &&
+      !isPrivateHost(parsed.hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function normalizeCandidateUrls(urls: string[], limit = 5): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const url of urls) {
+    if (!isAllowedFetchUrl(url)) continue;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    normalized.push(url);
+    if (normalized.length >= limit) break;
+  }
+
+  return normalized;
+}
+
+async function searchWithCurrentProvider(
+  query: string,
+  options?: { disableFallback?: boolean },
+): Promise<{ urls: string[]; providerUsed: string; error?: string }> {
+  try {
+    const searchResult = await tinyfishSearch(query);
+    return {
+      urls: normalizeCandidateUrls(searchResult.results.map((result) => result.url)),
+      providerUsed: "current",
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (options?.disableFallback) {
+      return { urls: [], providerUsed: "current", error: message };
+    }
+
+    const urls = normalizeCandidateUrls(await agentSearchForUrls(query), 10);
+    return {
+      urls,
+      providerUsed: "agent",
+      error: message,
+    };
+  }
+}
+
+async function searchWithProvider(
+  query: string,
+  provider: SearchProvider,
+  options?: { disableCurrentSearchFallback?: boolean },
+): Promise<{ urls: string[]; providerUsed: string; error?: string }> {
+  if (provider === "exa") {
+    const results = await exaSearch(query, { numResults: 5 });
+    return {
+      urls: normalizeCandidateUrls(results.map((result) => result.url)),
+      providerUsed: "exa",
+    };
+  }
+
+  if (provider === "agent") {
+    return {
+      urls: normalizeCandidateUrls(await agentSearchForUrls(query), 10),
+      providerUsed: "agent",
+    };
+  }
+
+  return searchWithCurrentProvider(query, {
+    disableFallback: options?.disableCurrentSearchFallback,
+  });
+}
+
 async function rawFetchPage(
   url: string,
 ): Promise<{ url: string; title: string | null; text: string; error?: string }> {
+  if (!isAllowedFetchUrl(url)) {
+    return {
+      url,
+      title: null,
+      text: "",
+      error: "URL blocked by fetch policy",
+    };
+  }
+
   try {
     const response = await fetch(url, {
       headers: {
@@ -831,6 +957,32 @@ async function rawFetchPage(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+async function exaFetchPages(
+  urls: string[],
+): Promise<Array<{ url: string; title: string | null; text: string; error?: string }>> {
+  const allowedUrls = normalizeCandidateUrls(urls, urls.length);
+  if (allowedUrls.length === 0) return [];
+
+  const results = await exaGetContents(allowedUrls);
+  return results.map((result) => ({
+    url: result.url,
+    title: result.title,
+    text: result.text,
+    error: result.error,
+  }));
+}
+
+async function fetchPagesWithProvider(
+  urls: string[],
+  fetchProvider: FetchProvider,
+): Promise<Array<{ url: string; title: string | null; text: string; error?: string }>> {
+  const normalizedUrls = normalizeCandidateUrls(urls, urls.length);
+  if (fetchProvider === "exa") {
+    return exaFetchPages(normalizedUrls);
+  }
+  return Promise.all(normalizedUrls.map(rawFetchPage));
 }
 
 function buildExtractionPrompt(
@@ -908,76 +1060,126 @@ async function collectFindingsViaDefaultPipeline(
   company: Company,
   definitions: SignalDefinition[],
 ): Promise<SignalFinding[]> {
-  return collectFindingsViaSearchFetchExtract(company, definitions);
+  const result = await collectSearchFetchPipeline(company, definitions, {
+    searchProvider: getDefaultSearchProvider(),
+    fetchProvider: getDefaultFetchProvider(),
+  });
+  return result.findings;
 }
 
 async function collectFindingsViaSearchFetchExtract(
   company: Company,
   definitions: SignalDefinition[],
+  options?: SearchFetchPipelineOptions,
 ): Promise<SignalFinding[]> {
+  const result = await collectSearchFetchPipeline(company, definitions, options);
+  return result.findings;
+}
+
+async function collectSearchFetchPipeline(
+  company: Company,
+  definitions: SignalDefinition[],
+  options?: SearchFetchPipelineOptions,
+): Promise<SearchFetchCollectionResult> {
   const enabledDefinitions = definitions.filter((d) => d.enabled);
   const tag = `[PIPELINE] [${company.company_name}]`;
+  const searchProvider = options?.searchProvider ?? getDefaultSearchProvider();
+  const fetchProvider = options?.fetchProvider ?? getDefaultFetchProvider();
 
   console.log(
-    "%s Processing %d definitions via search+fetch+extract",
+    "%s Processing %d definitions via search+fetch+extract (%s/%s)",
     tag,
     enabledDefinitions.length,
+    searchProvider,
+    fetchProvider,
   );
 
+  const retrievalMetrics: RetrievalMetric[] = [];
   const settledResults = await Promise.allSettled(
     enabledDefinitions.map(async (definition): Promise<SignalFinding[]> => {
       const resolvedUrl = resolveTemplate(definition.target_url, company);
+      const metric: RetrievalMetric = {
+        definitionId: definition.id,
+        definitionName: definition.name,
+        searchBased: isSearchBasedDefinition(resolvedUrl),
+        searchProviderRequested: isSearchBasedDefinition(resolvedUrl)
+          ? searchProvider
+          : undefined,
+        fetchProviderRequested: fetchProvider,
+        searchLatencyMs: 0,
+        fetchLatencyMs: 0,
+        urlsDiscovered: 0,
+        urlsFetched: 0,
+        successfulPages: 0,
+        fetchErrorCount: 0,
+      };
 
-      if (isSearchBasedDefinition(resolvedUrl)) {
-        const query = buildSearchQuery(company, definition);
-        let searchUrls: string[] = [];
+      try {
+        if (metric.searchBased) {
+          const query = buildSearchQuery(company, definition);
+          const searchStartedAt = Date.now();
+          const searchResult = await searchWithProvider(query, searchProvider, {
+            disableCurrentSearchFallback: options?.disableCurrentSearchFallback,
+          });
+          metric.searchLatencyMs = Date.now() - searchStartedAt;
+          metric.searchProviderUsed = searchResult.providerUsed;
+          metric.urlsDiscovered = searchResult.urls.length;
+          metric.searchError = searchResult.error;
 
-        try {
-          const searchResult = await tinyfishSearch(query);
-          searchUrls = searchResult.results.slice(0, 5).map((r) => r.url);
           console.log(
-            "%s [%s] Search API found %d results",
+            "%s [%s] %s search found %d results",
             tag,
             definition.name,
-            searchUrls.length,
+            searchResult.providerUsed,
+            searchResult.urls.length,
           );
-        } catch (err) {
-          console.log(
-            "%s [%s] Search API unavailable (%s), using agent to search: %s",
-            tag,
-            definition.name,
-            err instanceof Error ? err.message : String(err),
-            query,
-          );
-          searchUrls = await agentSearchForUrls(query);
-          console.log(
-            "%s [%s] Agent search found %d results",
-            tag,
-            definition.name,
-            searchUrls.length,
-          );
+
+          const fetchStartedAt = Date.now();
+          const pages = await fetchPagesWithProvider(searchResult.urls, fetchProvider);
+          metric.fetchLatencyMs = Date.now() - fetchStartedAt;
+          metric.urlsFetched = pages.length;
+          metric.fetchErrorCount = pages.filter((page) => !!page.error).length;
+
+          const successPages = pages.filter((p) => !p.error && p.text.length > 50);
+          metric.successfulPages = successPages.length;
+          retrievalMetrics.push(metric);
+
+          return extractSignalsFromContent(company.company_name, definition, successPages);
         }
 
-        const pages = await Promise.all(searchUrls.map(rawFetchPage));
-        const successPages = pages.filter((p) => !p.error && p.text.length > 50);
-
-        return extractSignalsFromContent(company.company_name, definition, successPages);
-      }
-
-      console.log("%s [%s] Fetching %s", tag, definition.name, resolvedUrl);
-      const page = await rawFetchPage(resolvedUrl);
-
-      if (page.error || page.text.length < 50) {
-        console.warn(
-          "%s [%s] Fetch failed: %s",
+        console.log(
+          "%s [%s] Fetching %s via %s",
           tag,
           definition.name,
-          page.error ?? "empty content",
+          resolvedUrl,
+          fetchProvider,
         );
-        return [];
-      }
+        const fetchStartedAt = Date.now();
+        const pages = await fetchPagesWithProvider([resolvedUrl], fetchProvider);
+        metric.fetchLatencyMs = Date.now() - fetchStartedAt;
+        metric.urlsFetched = pages.length;
+        metric.fetchErrorCount = pages.filter((page) => !!page.error).length;
 
-      return extractSignalsFromContent(company.company_name, definition, [page]);
+        const page = pages[0];
+        if (!page || page.error || page.text.length < 50) {
+          console.warn(
+            "%s [%s] Fetch failed: %s",
+            tag,
+            definition.name,
+            page?.error ?? "empty content",
+          );
+          retrievalMetrics.push(metric);
+          return [];
+        }
+
+        metric.successfulPages = 1;
+        retrievalMetrics.push(metric);
+        return extractSignalsFromContent(company.company_name, definition, [page]);
+      } catch (error) {
+        metric.searchError = error instanceof Error ? error.message : String(error);
+        retrievalMetrics.push(metric);
+        throw error;
+      }
     }),
   );
 
@@ -999,7 +1201,10 @@ async function collectFindingsViaSearchFetchExtract(
   }
   console.log("%s Extracted %d total findings", tag, findings.length);
 
-  return findings;
+  return {
+    findings,
+    retrievalMetrics,
+  };
 }
 
 export async function benchmarkCompanyWithLegacyAgents(
@@ -1052,12 +1257,17 @@ export async function benchmarkCompanyWithSearchFetchExtract(
   company: Company,
   definitions: SignalDefinition[],
   trigger: "manual" | "cron" = "manual",
+  options?: SearchFetchPipelineOptions,
 ): Promise<CompanyPipelineResult> {
   const tag = `[BENCH] [FETCH] [${company.company_name}]`;
   const startTime = Date.now();
 
   try {
-    const findings = await collectFindingsViaSearchFetchExtract(company, definitions);
+    const findings = await collectFindingsViaSearchFetchExtract(
+      company,
+      definitions,
+      options,
+    );
     const result = await persistCompanyFindings(company, definitions, trigger, findings);
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     console.log(
@@ -1206,10 +1416,6 @@ export async function maybeReuseRecentReport(
   };
 }
 
-export type PipelineBenchmarkMode =
-  | "legacy_tinyfish_agents"
-  | "search_fetch_extract";
-
 export interface CompanyPipelineAnalysis {
   mode: PipelineBenchmarkMode;
   companyId: string;
@@ -1223,6 +1429,7 @@ export interface CompanyPipelineAnalysis {
   canaryCaptured: boolean;
   findings: SignalFinding[];
   digestFindings: SignalFinding[];
+  retrievalMetrics: RetrievalMetric[];
   error?: string;
 }
 
@@ -1230,13 +1437,37 @@ async function collectFindingsForMode(
   mode: PipelineBenchmarkMode,
   company: Company,
   definitions: SignalDefinition[],
-): Promise<SignalFinding[]> {
+): Promise<SearchFetchCollectionResult> {
   if (mode === "legacy_tinyfish_agents") {
     const enabledDefinitions = definitions.filter((definition) => definition.enabled);
-    return runIntelligenceAgentsSilent(company, enabledDefinitions);
+    return {
+      findings: await runIntelligenceAgentsSilent(company, enabledDefinitions),
+      retrievalMetrics: [],
+    };
   }
 
-  return collectFindingsViaSearchFetchExtract(company, definitions);
+  if (mode === "current_search_raw_fetch") {
+    return collectSearchFetchPipeline(company, definitions, {
+      searchProvider: "current",
+      fetchProvider: "raw",
+    });
+  }
+
+  if (mode === "exa_search_raw_fetch") {
+    return collectSearchFetchPipeline(company, definitions, {
+      searchProvider: "exa",
+      fetchProvider: "raw",
+    });
+  }
+
+  return collectSearchFetchPipeline(company, definitions, {
+    searchProvider: "exa",
+    fetchProvider: "exa",
+  });
+}
+
+function shouldSkipSemanticLlmDedup(mode: PipelineBenchmarkMode): boolean {
+  return mode === "exa_search_exa_fetch_skip_llm_dedup";
 }
 
 export async function analyzeCompanyWithMode(
@@ -1247,9 +1478,16 @@ export async function analyzeCompanyWithMode(
   const startedAt = Date.now();
 
   try {
-    const rawFindings = await collectFindingsForMode(mode, company, definitions);
+    const { findings: rawFindings, retrievalMetrics } = await collectFindingsForMode(
+      mode,
+      company,
+      definitions,
+    );
     const newFindings = await deduplicateFindings(company.company_id, rawFindings);
-    const finalFindings = await llmDedup(company.company_id, newFindings);
+    // Benchmark-only variant: keep extraction, bypass semantic LLM cleanup.
+    const finalFindings = shouldSkipSemanticLlmDedup(mode)
+      ? newFindings
+      : await llmDedup(company.company_id, newFindings);
 
     for (const finding of finalFindings) {
       const { score, tier } = scoreSignalFinding(finding);
@@ -1280,6 +1518,7 @@ export async function analyzeCompanyWithMode(
       canaryCaptured: highFreshCount > 0,
       findings: finalFindings,
       digestFindings,
+      retrievalMetrics,
     };
   } catch (error) {
     return {
@@ -1295,6 +1534,7 @@ export async function analyzeCompanyWithMode(
       canaryCaptured: false,
       findings: [],
       digestFindings: [],
+      retrievalMetrics: [],
       error: error instanceof Error ? error.message : String(error),
     };
   }
