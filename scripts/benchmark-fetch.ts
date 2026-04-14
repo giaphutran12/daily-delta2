@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Benchmark: TinyFish /fetch vs raw fetch() + Readability
+ * Benchmark: TinyFish public Fetch API vs raw fetch() + Readability
  *
  * Compares both approaches on real URLs from the pipeline to measure
  * content quality, completeness, noise, and latency.
@@ -29,7 +29,7 @@ async function tinyfishFetchPage(
   const apiKey = process.env.TINYFISH_API_KEY;
   if (!apiKey) throw new Error("TINYFISH_API_KEY not set");
 
-  const response = await fetch("https://api.fetch.tinyfish.ai/fetch", {
+  const response = await fetch("https://api.fetch.tinyfish.ai", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -236,7 +236,7 @@ function formatResults(results: BenchmarkResult[]): string {
     lines.push(`\n---\n## ${r.label}`);
     lines.push(`URL: ${r.url}\n`);
 
-    lines.push("### TinyFish /fetch");
+    lines.push("### TinyFish public Fetch API");
     if (r.tinyfishFetch.error) {
       lines.push(`**Error:** ${r.tinyfishFetch.error}`);
     } else {

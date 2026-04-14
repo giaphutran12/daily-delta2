@@ -1,7 +1,8 @@
 import { TinyFish, RunStatus } from "@tiny-fish/sdk";
 
 const AGENT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-const TINYFISH_REST_API_BASE = "https://agent.tinyfish.ai/v1";
+const TINYFISH_PUBLIC_SEARCH_API_BASE = "https://api.search.tinyfish.ai";
+const TINYFISH_PUBLIC_FETCH_API_BASE = "https://api.fetch.tinyfish.ai";
 
 // ---------------------------------------------------------------------------
 // Public types (kept identical so callers need no changes)
@@ -323,7 +324,7 @@ export async function getTinyfishRun(
 }
 
 // ---------------------------------------------------------------------------
-// Search API — GET https://agent.tinyfish.ai/v1/search
+// Search API — GET https://api.search.tinyfish.ai
 // ---------------------------------------------------------------------------
 
 export interface TinyfishSearchResult {
@@ -374,7 +375,7 @@ export async function tinyfishSearch(
   query: string,
   options?: { location?: string; language?: string },
 ): Promise<TinyfishSearchResult> {
-  const url = new URL(`${TINYFISH_REST_API_BASE}/search`);
+  const url = new URL(TINYFISH_PUBLIC_SEARCH_API_BASE);
   url.searchParams.set("query", query);
   if (options?.location) url.searchParams.set("location", options.location);
   if (options?.language) url.searchParams.set("language", options.language);
@@ -397,7 +398,7 @@ export async function tinyfishSearch(
 }
 
 // ---------------------------------------------------------------------------
-// Fetch API — POST https://agent.tinyfish.ai/v1/fetch
+// Fetch API — POST https://api.fetch.tinyfish.ai
 // ---------------------------------------------------------------------------
 
 export interface TinyfishFetchResult {
@@ -423,7 +424,7 @@ export async function tinyfishFetch(
   urls: string[],
   options?: { format?: "markdown" | "html" | "json" },
 ): Promise<TinyfishFetchResult> {
-  const response = await fetchWithRetry(`${TINYFISH_REST_API_BASE}/fetch`, {
+  const response = await fetchWithRetry(TINYFISH_PUBLIC_FETCH_API_BASE, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
