@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.1.1] - 2026-04-15
+
+### Changed
+
+- Pointed TinyFish public search and fetch calls at the documented public API base paths instead of the incorrect Agent-style routes.
+
+### Fixed
+
+- Corrected the benchmark helper and service tests so they verify the public TinyFish Search and Fetch API shapes that return JSON successfully.
+
 ## [0.0.1.0] - 2026-04-13
 
 ### Added

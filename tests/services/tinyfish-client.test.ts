@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("tinyfish REST endpoints", () => {
-  it("calls the live /v1/search endpoint", async () => {
+  it("calls the public search base path", async () => {
     process.env[API_KEY_ENV] = "test-key";
 
     const fetchMock = vi.fn().mockResolvedValue(
@@ -42,13 +42,14 @@ describe("tinyfish REST endpoints", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [url, init] = fetchMock.mock.calls[0] as [URL, RequestInit];
-    expect(url.toString()).toContain("https://agent.tinyfish.ai/v1/search");
+    expect(url.origin).toBe("https://api.search.tinyfish.ai");
+    expect(url.pathname).toBe("/");
     expect(url.searchParams.get("query")).toBe("attio");
     expect(url.searchParams.get("language")).toBe("en");
     expect(init.headers).toEqual({ "X-API-Key": "test-key" });
   });
 
-  it("calls the live /v1/fetch endpoint", async () => {
+  it("calls the public fetch base path", async () => {
     process.env[API_KEY_ENV] = "test-key";
 
     const fetchMock = vi.fn().mockResolvedValue(
@@ -85,7 +86,7 @@ describe("tinyfish REST endpoints", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://agent.tinyfish.ai/v1/fetch");
+    expect(url).toBe("https://api.fetch.tinyfish.ai");
     expect(init.method).toBe("POST");
     expect(init.headers).toEqual({
       "Content-Type": "application/json",
