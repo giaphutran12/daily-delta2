@@ -32,8 +32,9 @@ export function isSearchBasedDefinition(targetUrl: string): boolean {
 
 export function getDefaultSearchProvider(): SearchProvider {
   const value = process.env.DAILY_DELTA_SEARCH_PROVIDER?.trim().toLowerCase();
+  if (value === "tinyfish") return "current";
   if (value === "current" || value === "exa" || value === "agent") return value;
-  return "exa";
+  return "current";
 }
 
 export function getDefaultFetchProvider(): FetchProvider {

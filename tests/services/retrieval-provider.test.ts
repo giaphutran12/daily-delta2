@@ -14,12 +14,15 @@ afterEach(() => {
 });
 
 describe("retrieval provider defaults", () => {
-  it("defaults production search to Exa", () => {
-    expect(getDefaultSearchProvider()).toBe("exa");
+  it("defaults production search to TinyFish", () => {
+    expect(getDefaultSearchProvider()).toBe("current");
   });
 
   it("allows explicit search provider overrides", () => {
     process.env[SEARCH_ENV] = "current";
+    expect(getDefaultSearchProvider()).toBe("current");
+
+    process.env[SEARCH_ENV] = "tinyfish";
     expect(getDefaultSearchProvider()).toBe("current");
 
     process.env[SEARCH_ENV] = "agent";

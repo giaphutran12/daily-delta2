@@ -863,9 +863,19 @@ async function searchWithCurrentProvider(
 ): Promise<{ urls: string[]; providerUsed: string; error?: string }> {
   try {
     const searchResult = await tinyfishSearch(query);
+    const urls = normalizeCandidateUrls(searchResult.results.map((result) => result.url));
+    if (urls.length > 0 || options?.disableFallback) {
+      return {
+        urls,
+        providerUsed: "current",
+      };
+    }
+
+    const fallbackUrls = normalizeCandidateUrls(await agentSearchForUrls(query), 10);
     return {
-      urls: normalizeCandidateUrls(searchResult.results.map((result) => result.url)),
-      providerUsed: "current",
+      urls: fallbackUrls,
+      providerUsed: "agent",
+      error: "TinyFish search returned 0 usable URLs",
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
