@@ -229,13 +229,20 @@ That gives the product a real TinyFish-first path without forcing the whole stac
 
 ## 8. Repo Changes After This Decision
 
-Local code change prepared on top of the corrected public endpoints:
+Current branch change on top of the corrected public endpoints:
 
 - default search provider switched from Exa to TinyFish
 - `DAILY_DELTA_SEARCH_PROVIDER=tinyfish` works as an explicit alias
 - if TinyFish search returns `0` usable URLs, pipeline falls back to TinyFish agent search
 
-Verification on that change:
+Autoplan conclusion:
+
+- CEO: TinyFish-first search makes sense for the product story and is supported by the benchmark
+- Design: skipped, no UI scope
+- Eng: implementation is small and defensive, fetch remains deliberately not overcommitted
+- no blocker-level issue found, so the change is safe to ship as a search-first step rather than a full pipeline rewrite
+
+Verification on this change:
 
 - `npm run test` passed
 - `npm run build` passed
