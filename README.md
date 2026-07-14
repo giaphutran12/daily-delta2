@@ -10,11 +10,24 @@ AI-powered competitive intelligence platform that monitors companies and generat
 |------|-------|---------|
 | **Web App** | Next.js 16, React 19, Tailwind 4, Supabase | Full dashboard — manage companies, view reports, configure signals |
 | **Chrome Extension** | Vite 6, React 19, Tailwind 4, Supabase | Side-panel companion — run agents and read reports from any browser tab |
-| **Backend** | Next.js API routes, Supabase, Inngest | SSE-streamed agent orchestration, report generation, email delivery |
+| **Backend** | Next.js API routes, Supabase | Report storage and email delivery; Inngest execution is currently suspended |
 
 ---
 
 ## Web App
+
+### Inngest status
+
+Inngest is intentionally disabled in `src/inngest/config.ts`. The deployed
+`/api/inngest` endpoint advertises no functions, `/api/trigger-pipeline`
+returns `503`, and competitor creation does not queue background pipeline
+runs. This prevents both scheduled and manually triggered Daily Delta runs
+from appearing in the shared Inngest environment.
+
+After deploying this version, sync the production Inngest app once (or verify
+the deployment's automatic sync) so the previously registered functions are
+deregistered. Do not re-enable the switch without also confirming which
+Inngest environment should own the app.
 
 ### Prerequisites
 

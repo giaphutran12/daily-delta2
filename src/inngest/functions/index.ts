@@ -1,3 +1,4 @@
+import { INNGEST_ENABLED } from "@/inngest/config";
 import { dailyPipeline } from "./daily-pipeline";
 import {
   companyRunCompleted,
@@ -6,10 +7,14 @@ import {
   processCompanyPipelineRun,
 } from "./pipeline-workflow";
 
-export const functions = [
+const configuredFunctions = [
   dailyPipeline,
   pipelineRequested,
   processCompanyPipelineRun,
   companyRunCompleted,
   finalizePipelineRequest,
 ];
+
+// Syncing the deployed endpoint with an empty list deregisters the cron and
+// event-driven workers while leaving the implementation available to restore.
+export const functions = INNGEST_ENABLED ? configuredFunctions : [];
