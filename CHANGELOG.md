@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.1.2] - 2026-07-14
+
+### Changed
+
+- Suspended all Daily Delta Inngest functions, including the daily cron, to stop scheduled and manual pipeline runs from polluting the shared production dashboard.
+- Made pipeline trigger requests return `503` and stopped competitor creation from queuing background refreshes while Inngest is disabled.
+
+### Documentation
+
+- Documented the production sync required to deregister the previously deployed Inngest functions.
+
 ## [0.0.1.1] - 2026-04-15
 
 ### Changed
