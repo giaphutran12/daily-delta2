@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.1.3] - 2026-07-14
+
+### Fixed
+
+- Registered one inert, event-only tombstone while Inngest is disabled so production sync can remove the old cron and workflow registrations; Inngest rejects an empty function list.
+
 ## [0.0.1.2] - 2026-07-14
 
 ### Changed

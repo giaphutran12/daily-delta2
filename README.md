@@ -19,10 +19,12 @@ AI-powered competitive intelligence platform that monitors companies and generat
 ### Inngest status
 
 Inngest is intentionally disabled in `src/inngest/config.ts`. The deployed
-`/api/inngest` endpoint advertises no functions, `/api/trigger-pipeline`
-returns `503`, and competitor creation does not queue background pipeline
-runs. This prevents both scheduled and manually triggered Daily Delta runs
-from appearing in the shared Inngest environment.
+`/api/inngest` endpoint advertises only an inert, event-only tombstone function,
+`/api/trigger-pipeline` returns `503`, and competitor creation does not queue
+background pipeline runs. The tombstone exists because Inngest refuses to sync
+an app with zero functions; it has no cron and receives no application events.
+This prevents both scheduled and manually triggered Daily Delta runs from
+appearing in the shared Inngest environment.
 
 After deploying this version, sync the production Inngest app once (or verify
 the deployment's automatic sync) so the previously registered functions are
