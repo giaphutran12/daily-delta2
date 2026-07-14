@@ -9,9 +9,10 @@ import { POST } from "@/app/api/trigger-pipeline/route";
 import { enqueuePipelineRequestedEvent } from "@/services/pipeline-request-service";
 
 describe("disabled Inngest integration", () => {
-  it("does not register scheduled or event-driven functions", () => {
+  it("registers only the inert tombstone needed to deregister old workflows", () => {
     expect(INNGEST_ENABLED).toBe(false);
-    expect(functions).toEqual([]);
+    expect(functions).toHaveLength(1);
+    expect(functions[0]?.id()).toContain("inngest-disabled");
   });
 
   it("rejects pipeline API requests without emitting an event", async () => {
