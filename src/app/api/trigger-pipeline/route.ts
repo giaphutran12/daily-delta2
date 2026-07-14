@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  INNGEST_DISABLED_MESSAGE,
+  INNGEST_ENABLED,
+} from "@/inngest/config";
+import {
   ApiAuthError,
   authenticateRequest,
   verifyOrganizationMembership,
@@ -11,6 +15,13 @@ import { enqueuePipelineRequestedEvent } from "@/services/pipeline-request-servi
 export const maxDuration = 800;
 
 export async function POST(request: NextRequest) {
+  if (!INNGEST_ENABLED) {
+    return NextResponse.json(
+      { error: INNGEST_DISABLED_MESSAGE },
+      { status: 503 },
+    );
+  }
+
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
 

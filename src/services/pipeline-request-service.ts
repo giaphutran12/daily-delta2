@@ -1,5 +1,9 @@
 import { inngest } from "@/inngest/client";
 import {
+  INNGEST_DISABLED_MESSAGE,
+  INNGEST_ENABLED,
+} from "@/inngest/config";
+import {
   PIPELINE_REQUESTED_EVENT,
   type PipelineRequestSource,
 } from "@/inngest/events";
@@ -789,6 +793,10 @@ export async function markCompanyRunsRequested(
 export async function enqueuePipelineRequestedEvent(
   input: EnqueuePipelineRequestInput,
 ): Promise<QueuedPipelineRequest> {
+  if (!INNGEST_ENABLED) {
+    throw new Error(INNGEST_DISABLED_MESSAGE);
+  }
+
   const shell = await ensurePipelineRequestShell(input);
 
   if (shell && !shell.created) {

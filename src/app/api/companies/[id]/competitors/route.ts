@@ -1,5 +1,6 @@
 import { after, NextRequest } from "next/server";
 import { withOrg, type OrgAuthContext } from "@/app/api/_lib/with-auth";
+import { INNGEST_ENABLED } from "@/inngest/config";
 import type { DiscoveryResult } from "@/lib/types";
 import {
   addCompanyToPlatform,
@@ -153,7 +154,8 @@ export const POST = withOrg(async (req: NextRequest, ctx: OrgAuthContext) => {
   }
 
   const refreshQueued =
-    shouldRunDiscovery || needsRefresh(competitor.last_agent_run);
+    INNGEST_ENABLED &&
+    (shouldRunDiscovery || needsRefresh(competitor.last_agent_run));
 
   if (refreshQueued) {
     after(async () => {
